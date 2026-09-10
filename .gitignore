@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+.pi/scheduler.json
+.pi/scheduler.lock
+.pi/*.corrupt.*

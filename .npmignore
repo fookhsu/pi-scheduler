@@ -1,0 +1,6 @@
+node_modules/
+tests/
+tsconfig.json
+.git/
+.pi/
+*.tgz

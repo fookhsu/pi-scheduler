@@ -1,0 +1,42 @@
+{
+  "name": "pi-scheduler",
+  "version": "0.1.0",
+  "description": "Schedule prompts for Pi sessions",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "scheduler",
+    "cron"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "croner": "^9.0.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typebox": "^1.3.30",
+    "typescript": "^5.9.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/scheduler.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}
