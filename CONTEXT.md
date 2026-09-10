@@ -29,5 +29,21 @@ A schedule task whose planned time passed while Pi was not available to execute 
 _Avoid_: Expired task.
 
 **Scheduler**:
-The component that determines when schedule tasks are due and starts their task runs.
-_Avoid_: Daemon (the first release is not a daemon).
+The component that determines when schedule tasks are due.
+_Avoid_: Runner.
+
+**Task Runner**:
+The component that starts a Task Session for a due task run.
+_Avoid_: Daemon, scheduler.
+
+**Task Session**:
+An isolated Pi session belonging to one Task Run and separate from the user's interactive Pi session.
+_Avoid_: Background session, shared session.
+
+**Pi Session**:
+A conversation and its recorded context owned by one Pi runtime.
+_Avoid_: Window, task, run.
+
+**User Pi Session**:
+The interactive Pi session in which a user creates and manages schedule tasks.
+_Avoid_: Main session, global session.
