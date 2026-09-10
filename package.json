@@ -1,21 +1,47 @@
 {
-  "name": "pi-scheduler",
+  "name": "@fookhsu/pi-scheduler",
   "version": "0.1.0",
-  "description": "Schedule prompts for Pi sessions",
+  "description": "Cron-driven scheduled prompt tasks for Pi, each run in an isolated Task Session",
   "keywords": [
     "pi-package",
     "pi",
+    "pi-extension",
     "scheduler",
-    "cron"
+    "cron",
+    "task-scheduler",
+    "automation"
   ],
+  "author": "fookhsu",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fookhsu/pi-extensions.git"
+  },
+  "homepage": "https://github.com/fookhsu/pi-extensions#readme",
+  "bugs": {
+    "url": "https://github.com/fookhsu/pi-extensions/issues"
+  },
   "type": "module",
   "bin": {
     "pi-scheduler": "./bin/pi-scheduler.mjs"
   },
+  "files": [
+    "bin",
+    "dist",
+    "extensions",
+    "skills",
+    "src"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "prepare": "npm run build",
+    "prepublishOnly": "npm run check",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build"

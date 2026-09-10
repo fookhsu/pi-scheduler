@@ -1,8 +1,8 @@
 # pi-scheduler
 
-Native scheduled prompt tasks for [Pi](https://pi.dev).
+Cron-driven scheduled prompt tasks for [Pi](https://pi.dev).
 
-Pi is the management surface; a `pi-scheduler` CLI is the execution surface. A
+Pi is the management surface; the `pi-scheduler` CLI is the execution surface. A
 cron entry invokes `pi-scheduler run-due`, which creates a fully isolated **Task
 Session** through the Pi SDK for each due task. The plugin never schedules
 itself and never injects task output into your interactive Pi session.
@@ -14,27 +14,35 @@ itself and never injects task output into your interactive Pi session.
 - Project-local task and run storage under `.pi/scheduler/`
 - Idempotent `run-due` with a project run lock and per-run records
 - Crash recovery: stale runs are reclaimed on the next invocation
+- Per-task and per-project configuration overrides
 - Agent tool plus slash commands for management
 
 ## Install
 
 ```bash
-pi install .      # register the extension and skill
+# From npm (recommended)
+pi install npm:@fookhsu/pi-scheduler
+
+# Or from a checkout
+pi install .
 npm run build     # produce the pi-scheduler CLI in dist/
 ```
 
-After installation, restart Pi or run `/reload`.
+Restart Pi or run `/reload` after installing. Installed with `pi install -l`,
+the package is recorded in the project's `.pi/settings.json` instead of your
+user settings.
 
 ## Cron setup
 
-`run-due` is the only execution entry point. Add one line to your crontab, once
-per project (or point `--project` at each project):
+`run-due` is the only execution entry point, and the CLI never manages your
+crontab. Add one line per project (or point `--project` at each project):
 
 ```cron
-*/5 * * * * cd /path/to/project && /path/to/pi-scheduler run-due >> .pi/scheduler/cron.log 2>&1
+*/5 * * * * cd /path/to/project && "$HOME/.pi/agent/npm/node_modules/.bin/pi-scheduler" run-due >> .pi/scheduler/cron.log 2>&1
 ```
 
-The CLI does not manage your crontab for you.
+Project installs put the binary at `.pi/npm/node_modules/.bin/pi-scheduler`
+instead. If you linked it onto your `PATH`, plain `pi-scheduler` works.
 
 ## CLI
 
@@ -42,7 +50,7 @@ The CLI does not manage your crontab for you.
 pi-scheduler run-due [--project <path>]     # cron entry point
 pi-scheduler run <taskId> [--project <path>]
 pi-scheduler list [--project <path>] [--json]
-pi-scheduler add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [--name n]
+pi-scheduler add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [options]
 pi-scheduler enable <taskId> | disable <taskId> | remove <taskId>
 pi-scheduler prune --keep <n>
 ```
@@ -86,6 +94,99 @@ The `schedule_task` tool supports `add`, `list`, `enable`, `disable`, `delete`,
 
 Creating, deleting, and clearing tasks requires interactive confirmation.
 
+## Configuration and overrides
+
+A Task Session is an ordinary Pi session: it runs in the task's `cwd` (the
+project root by default) and loads that project's settings, `AGENTS.md`, skills,
+and extensions. You can override what it uses at two levels.
+
+Resolution order, highest priority first:
+
+1. Per-task fields (`model`, `thinking`, `cwd`, `tools`).
+2. Project settings in `<project>/.pi/settings.json`.
+3. User settings in `~/.pi/agent/settings.json`.
+
+### Override a run with `.pi/settings.json`
+
+Project settings merge over global settings, so a repository can pin the model
+that scheduled work uses without touching your global default:
+
+```json
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-v4-flash",
+  "defaultThinkingLevel": "low"
+}
+```
+
+The same file can disable scheduler resources for a project that should not run
+scheduled tasks, using the package-filter object form:
+
+```json
+{
+  "packages": [
+    {
+      "source": "npm:@fookhsu/pi-scheduler",
+      "extensions": [],
+      "skills": []
+    }
+  ]
+}
+```
+
+Project overrides only apply after the project is trusted; commit
+`.pi/settings.json` to share them with your team. `pi config -l` opens the same
+file in an editor with inherited global resources dimmed.
+
+### Override one task
+
+Any task can override the model, thinking level, working directory, and tool
+allowlist. In `.pi/scheduler/tasks.json`:
+
+```json
+{
+  "id": "task_a1b2c3d4",
+  "name": "daily-audit",
+  "prompt": "检查 CI 并分析失败原因",
+  "schedule": { "kind": "cron", "expression": "0 9 * * *" },
+  "model": "anthropic/claude-opus-4-5",
+  "thinking": "high",
+  "cwd": "packages/api",
+  "tools": ["read", "bash", "grep"],
+  "enabled": true,
+  "nextRunAt": "2026-09-11T09:00:00.000Z",
+  "createdAt": "2026-09-10T09:00:00.000Z",
+  "updatedAt": "2026-09-10T09:00:00.000Z"
+}
+```
+
+`cwd` is resolved relative to the project root. Omitting a field falls back to
+the project and user settings; omitting `tools` keeps Pi's default tool set.
+
+The same overrides are available on the CLI and the Agent tool:
+
+```bash
+pi-scheduler add \
+  --prompt "检查 CI 并分析失败原因" \
+  --cron "0 9 * * *" \
+  --model anthropic/claude-opus-4-5 \
+  --thinking high \
+  --cwd packages/api \
+  --tools read,bash,grep
+```
+
+```json
+{
+  "action": "add",
+  "prompt": "检查 CI 并分析失败原因",
+  "schedule": { "kind": "cron", "expression": "0 9 * * *" },
+  "model": "anthropic/claude-opus-4-5",
+  "thinking": "high",
+  "cwd": "packages/api",
+  "tools": ["read", "bash", "grep"]
+}
+```
+
 ## Storage and recovery
 
 ```text
@@ -120,3 +221,17 @@ npm run check    # typecheck + tests + build
 
 `extensions/scheduler.ts` is the management surface; the Task Runner, stores,
 locking, CLI, and Pi SDK executor live under `src/`.
+
+## Releasing
+
+The package follows the [Pi package](https://pi.dev/docs/latest/packages)
+conventions: the `pi-package` keyword and a `pi` manifest in `package.json`.
+
+```bash
+npm run check        # typecheck + tests + build
+npm pack --dry-run   # inspect the published file list
+npm publish          # prepare builds dist/, prepublishOnly re-runs check
+```
+
+`files` ships `bin/`, `dist/`, `extensions/`, `skills/`, and `src/` — the
+extension imports `src/*.ts` at runtime, so `src/` must stay in the tarball.
