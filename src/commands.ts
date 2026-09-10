@@ -1,91 +1,132 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readRun, listRunsForTask } from "./runs.ts";
+import { runTask } from "./runner.ts";
+import { schedulerPaths } from "./paths.ts";
 import { parseDuration } from "./scheduling.ts";
-import { SchedulerRuntime } from "./runtime.ts";
-import type { ScheduleTask } from "./types.ts";
+import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "./task-service.ts";
+import type { RunRecord, ScheduleTask } from "./types.ts";
 
-export function registerCommands(pi: ExtensionAPI, runtime: SchedulerRuntime): void {
+export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("loop", {
-    description: "Create a recurring session task: /loop 5m check CI",
+    description: "Create a recurring task: /loop 30m check CI",
     handler: async (args, ctx) => {
-      try {
+      await guard(ctx, async () => {
         const match = /^\s*(\S+)\s+([\s\S]+?)\s*$/.exec(args);
         if (!match) throw new Error("Usage: /loop <duration> <prompt>");
-        const scheduler = runtime.getScheduler();
-        const task = await scheduler.add({
+        const task = await addTask(ctx.cwd, {
           prompt: match[2],
-          schedule: { kind: "interval", every: match[1], scope: "session" },
-          scope: "session",
+          schedule: { kind: "interval", every: match[1] },
         });
-        ctx.ui.notify(`Created session task ${task.id}; next run ${formatDate(task.nextRunAt)}`, "info");
-      } catch (error) {
-        ctx.ui.notify(errorMessage(error), "error");
-      }
+        ctx.ui.notify(`Created ${task.id}; next run ${formatDate(task.nextRunAt)}`, "info");
+      });
     },
   });
 
   pi.registerCommand("remind", {
     description: "Create a one-time task: /remind in 45m check the PR",
     handler: async (args, ctx) => {
-      try {
+      await guard(ctx, async () => {
         const parsed = parseReminder(args);
-        const task = await runtime.getScheduler().add({
+        const task = await addTask(ctx.cwd, {
           prompt: parsed.prompt,
-          schedule: { kind: "once", runAt: parsed.runAt, scope: "durable" },
-          scope: "durable",
+          schedule: { kind: "once", runAt: parsed.runAt },
         });
-        ctx.ui.notify(`Created reminder ${task.id}; scheduled for ${formatDate(task.nextRunAt)}`, "info");
-      } catch (error) {
-        ctx.ui.notify(errorMessage(error), "error");
-      }
+        ctx.ui.notify(`Created ${task.id}; scheduled for ${formatDate(task.nextRunAt)}`, "info");
+      });
     },
   });
 
   pi.registerCommand("schedule", {
     description: "List and manage scheduled tasks",
     handler: async (args, ctx) => {
-      try {
-        const scheduler = runtime.getScheduler();
+      await guard(ctx, async () => {
         const tokens = args.trim().split(/\s+/).filter(Boolean);
         const action = tokens[0] ?? "list";
-        const id = tokens[1];
+        const paths = schedulerPaths(ctx.cwd);
+
         if (action === "list") {
-          ctx.ui.notify(formatTaskList(scheduler.list()), "info");
-        } else if (action === "enable" && id) {
-          await scheduler.enable(id);
-          ctx.ui.notify(`Enabled ${id}`, "info");
-        } else if (action === "disable" && id) {
-          await scheduler.disable(id);
-          ctx.ui.notify(`Disabled ${id}`, "info");
-        } else if (action === "run" && id) {
-          await scheduler.runNow(id);
-          ctx.ui.notify(`Queued ${id}`, "info");
-        } else if (action === "delete" && id) {
-          await scheduler.delete(id);
-          ctx.ui.notify(`Deleted ${id}`, "info");
-        } else if (action === "clear" && tokens.length === 1) {
-          const count = await scheduler.clear();
-          ctx.ui.notify(`Cleared ${count} task(s)`, "info");
-        } else {
-          throw new Error("Usage: /schedule [list|enable|disable|run|delete] <id> or /schedule clear");
+          const tasks = await listTasks(ctx.cwd);
+          ctx.ui.notify(tasks.length ? tasks.map(formatTask).join("\n") : "No scheduled tasks.", "info");
+          return;
         }
-      } catch (error) {
-        ctx.ui.notify(errorMessage(error), "error");
-      }
+        if (action === "add") {
+          const match = /^\s*add\s+(\S+)\s+([\s\S]+?)\s*$/.exec(args);
+          if (!match) throw new Error("Usage: /schedule add <duration> <prompt>");
+          const task = await addTask(ctx.cwd, { prompt: match[2], schedule: { kind: "interval", every: match[1] } });
+          ctx.ui.notify(`Created ${task.id}; next run ${formatDate(task.nextRunAt)}`, "info");
+          return;
+        }
+        if (action === "runs") {
+          const id = requireId(tokens[1], "runs");
+          const runs = await listRunsForTask(paths.runsDir, id);
+          ctx.ui.notify(runs.length ? runs.map(formatRun).join("\n") : `No runs for ${id}.`, "info");
+          return;
+        }
+        if (action === "open") {
+          const runId = requireId(tokens[1], "open");
+          const run = await readRun(paths.runsDir, runId);
+          if (!run) throw new Error(`Run not found: ${runId}`);
+          if (!run.sessionFile) throw new Error(`Run ${runId} has no session file`);
+          ctx.ui.notify(`Task Session: ${run.sessionFile}\nOpen it with: pi --session ${run.sessionFile}`, "info");
+          return;
+        }
+
+        if (action === "clear") {
+          ctx.ui.notify(`Cleared ${await clearTasks(ctx.cwd)} task(s)`, "info");
+          return;
+        }
+
+        const id = requireId(tokens[1], action);
+        if (action === "enable" || action === "disable") {
+          await setTaskEnabled(ctx.cwd, id, action === "enable");
+          ctx.ui.notify(`${action === "enable" ? "Enabled" : "Disabled"} ${id}`, "info");
+          return;
+        }
+        if (action === "run") {
+          await executeNow(ctx, id);
+          return;
+        }
+        if (action === "remove" || action === "delete") {
+          await removeTask(ctx.cwd, id);
+          ctx.ui.notify(`Removed ${id}`, "info");
+          return;
+        }
+        throw new Error("Usage: /schedule [list|add|enable|disable|run|remove|runs|open|clear] <id>");
+      });
     },
   });
 
   pi.registerCommand("unschedule", {
     description: "Delete a scheduled task: /unschedule <id>",
     handler: async (args, ctx) => {
-      try {
-        if (!args.trim()) throw new Error("Usage: /unschedule <id>");
-        await runtime.getScheduler().delete(args.trim());
-        ctx.ui.notify(`Deleted ${args.trim()}`, "info");
-      } catch (error) {
-        ctx.ui.notify(errorMessage(error), "error");
-      }
+      await guard(ctx, async () => {
+        const id = args.trim();
+        if (!id) throw new Error("Usage: /unschedule <id>");
+        await removeTask(ctx.cwd, id);
+        ctx.ui.notify(`Removed ${id}`, "info");
+      });
     },
   });
+}
+
+type CommandContext = Parameters<Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]>[1];
+
+async function guard(ctx: CommandContext, run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+  }
+}
+
+async function executeNow(ctx: CommandContext, id: string): Promise<void> {
+  const { createSdkExecutor } = await import("./executor.ts");
+  const outcome = await runTask(ctx.cwd, id, { executor: createSdkExecutor() });
+  if (outcome.status === "skipped") {
+    ctx.ui.notify("Another pi-scheduler invocation is running; try again shortly.", "warning");
+    return;
+  }
+  ctx.ui.notify(`${outcome.status}: ${outcome.taskId} (${outcome.runId})`, outcome.status === "error" ? "error" : "info");
 }
 
 function parseReminder(args: string): { runAt: string; prompt: string } {
@@ -108,23 +149,26 @@ function parseReminder(args: string): { runAt: string; prompt: string } {
   return { runAt: runAt.toISOString(), prompt: atMatch[3] };
 }
 
-export function formatTaskList(tasks: ScheduleTask[]): string {
-  if (tasks.length === 0) return "No scheduled tasks.";
-  return tasks.map((task) => {
-    const state = task.enabled ? (task.pending ? "pending" : "enabled") : "disabled";
-    const schedule = task.schedule.kind === "interval"
-      ? `every ${task.schedule.everyMs}ms`
-      : task.schedule.kind === "cron"
-        ? `cron ${task.schedule.expression}`
-        : `once ${task.schedule.runAt}`;
-    return `${task.id} [${state}, ${task.scope}] ${task.name ?? "-"} — ${schedule} — next ${formatDate(task.nextRunAt)} — runs ${task.runCount}`;
-  }).join("\n");
+function requireId(value: string | undefined, action: string): string {
+  if (!value) throw new Error(`/schedule ${action} requires a task id`);
+  return value;
+}
+
+export function formatTask(task: ScheduleTask): string {
+  return `${task.id} [${task.enabled ? "enabled" : "disabled"}] ${task.name ?? "-"} — ${formatSchedule(task)} — next ${formatDate(task.nextRunAt)}`;
+}
+
+export function formatRun(run: RunRecord): string {
+  const when = run.finishedAt ?? run.startedAt;
+  return `${run.runId} [${run.status}] ${run.trigger} — ${formatDate(when)}${run.sessionFile ? ` — ${run.sessionFile}` : ""}`;
+}
+
+function formatSchedule(task: ScheduleTask): string {
+  if (task.schedule.kind === "interval") return `every ${task.schedule.everyMs}ms`;
+  if (task.schedule.kind === "cron") return `cron ${task.schedule.expression}`;
+  return `once ${task.schedule.runAt}`;
 }
 
 function formatDate(value: string | undefined): string {
   return value ? new Date(value).toLocaleString() : "never";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

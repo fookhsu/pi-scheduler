@@ -1,23 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "../src/commands.ts";
-import { SchedulerRuntime } from "../src/runtime.ts";
 import { registerTools } from "../src/tools.ts";
+import { TASK_SESSION_ENV } from "../src/env.ts";
 
+/**
+ * Management surface only. The extension never schedules, locks, polls, or
+ * executes: cron invokes `pi-scheduler run-due`, and this only reads/writes the
+ * store. Inside a Task Session it stays completely inert.
+ */
 export default function (pi: ExtensionAPI): void {
-  const runtime = new SchedulerRuntime(pi);
-  registerCommands(pi, runtime);
-  registerTools(pi, runtime);
+  if (process.env[TASK_SESSION_ENV]) return;
 
-  pi.on("session_start", async (_event, ctx) => {
-    try {
-      await runtime.start(ctx);
-    } catch (error) {
-      await runtime.stop();
-      if (ctx.hasUI) ctx.ui.notify(`Failed to start scheduler: ${String(error)}`, "error");
-    }
-  });
-
-  pi.on("session_shutdown", async () => {
-    await runtime.stop();
-  });
+  registerCommands(pi);
+  registerTools(pi);
 }

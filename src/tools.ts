@@ -1,9 +1,12 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { SchedulerRuntime } from "./runtime.ts";
+import { schedulerPaths } from "./paths.ts";
+import { listRunsForTask } from "./runs.ts";
+import { runTask } from "./runner.ts";
 import type { ScheduleInput } from "./scheduling.ts";
-import type { ScheduleTask } from "./types.ts";
+import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "./task-service.ts";
+import type { RunRecord, ScheduleTask } from "./types.ts";
 
 const actionSchema = StringEnum([
   "add",
@@ -12,6 +15,7 @@ const actionSchema = StringEnum([
   "disable",
   "delete",
   "run",
+  "runs",
   "clear",
 ] as const);
 
@@ -21,10 +25,9 @@ const scheduleSchema = Type.Object({
   every: Type.Optional(Type.String()),
   expression: Type.Optional(Type.String()),
   timezone: Type.Optional(Type.String()),
-  scope: Type.Optional(StringEnum(["session", "durable"] as const)),
 });
 
-export function registerTools(pi: ExtensionAPI, runtime: SchedulerRuntime): void {
+export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "schedule_task",
     label: "Schedule Task",
@@ -32,54 +35,66 @@ export function registerTools(pi: ExtensionAPI, runtime: SchedulerRuntime): void
     promptSnippet: "Manage scheduled prompt tasks",
     promptGuidelines: [
       "Use schedule_task when the user asks Pi to perform a task later or repeatedly.",
-      "Use a session scope for temporary loops and a durable scope for project reminders that should survive restarts.",
+      "Scheduled tasks are project-scoped and run in isolated Task Sessions, not in the user's session.",
+      "Do not create duplicate tasks when an existing task already represents the same request.",
     ],
     parameters: Type.Object({
       action: actionSchema,
       id: Type.Optional(Type.String()),
       name: Type.Optional(Type.String()),
       prompt: Type.Optional(Type.String()),
-      scope: Type.Optional(StringEnum(["session", "durable"] as const)),
+      model: Type.Optional(Type.String()),
+      thinking: Type.Optional(Type.String()),
+      cwd: Type.Optional(Type.String()),
+      tools: Type.Optional(Type.Array(Type.String())),
       schedule: Type.Optional(scheduleSchema),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const scheduler = runtime.getScheduler();
-      const scope = params.scope ?? params.schedule?.scope ?? "durable";
-
       if (params.action === "add") {
-        if (!params.prompt || !params.schedule) {
-          throw new Error("add requires prompt and schedule");
-        }
-        await confirmMutation(ctx, scope === "durable", `Create ${scope} scheduled task?`);
-        const task = await scheduler.add({
+        if (!params.prompt || !params.schedule) throw new Error("add requires prompt and schedule");
+        await confirmMutation(ctx, "Create scheduled task?");
+        const task = await addTask(ctx.cwd, {
           name: params.name,
           prompt: params.prompt,
-          scope,
-          schedule: toScheduleInput(params.schedule, scope),
+          schedule: toScheduleInput(params.schedule),
+          model: params.model,
+          thinking: params.thinking,
+          cwd: params.cwd,
+          tools: params.tools,
         });
         return result(`Created ${task.id}; next run ${task.nextRunAt ?? "never"}`, task);
       }
 
       if (params.action === "list") {
-        const tasks = scheduler.list();
+        const tasks = await listTasks(ctx.cwd);
         return result(tasks.length ? tasks.map(formatTask).join("\n") : "No scheduled tasks.", { tasks });
       }
 
       if (!params.id && params.action !== "clear") throw new Error(`${params.action} requires id`);
-      if (params.action === "enable") return result(`Enabled ${params.id}`, await scheduler.enable(params.id!));
-      if (params.action === "disable") return result(`Disabled ${params.id}`, await scheduler.disable(params.id!));
+
+      if (params.action === "runs") {
+        const runs = await listRunsForTask(schedulerPaths(ctx.cwd).runsDir, params.id!);
+        return result(runs.length ? runs.map(formatRun).join("\n") : `No runs for ${params.id}.`, { runs });
+      }
+      if (params.action === "enable") {
+        return result(`Enabled ${params.id}`, await setTaskEnabled(ctx.cwd, params.id!, true));
+      }
+      if (params.action === "disable") {
+        return result(`Disabled ${params.id}`, await setTaskEnabled(ctx.cwd, params.id!, false));
+      }
       if (params.action === "run") {
-        await scheduler.runNow(params.id!);
-        return result(`Queued ${params.id}`);
+        const { createSdkExecutor } = await import("./executor.ts");
+        const outcome = await runTask(ctx.cwd, params.id!, { executor: createSdkExecutor() });
+        return result(`${outcome.status}: ${outcome.taskId} (${outcome.runId || "not started"})`);
       }
       if (params.action === "delete") {
-        await confirmMutation(ctx, true, `Delete scheduled task ${params.id}?`);
-        await scheduler.delete(params.id!);
+        await confirmMutation(ctx, `Delete scheduled task ${params.id}?`);
+        await removeTask(ctx.cwd, params.id!);
         return result(`Deleted ${params.id}`);
       }
       if (params.action === "clear") {
-        await confirmMutation(ctx, true, "Delete all scheduled tasks?");
-        return result(`Cleared ${await scheduler.clear()} task(s)`);
+        await confirmMutation(ctx, "Delete all scheduled tasks?");
+        return result(`Cleared ${await clearTasks(ctx.cwd)} task(s)`);
       }
 
       throw new Error(`Unsupported action: ${params.action}`);
@@ -89,41 +104,31 @@ export function registerTools(pi: ExtensionAPI, runtime: SchedulerRuntime): void
 
 async function confirmMutation(
   ctx: { hasUI: boolean; ui: { confirm(title: string, body: string): Promise<boolean> } },
-  required: boolean,
   message: string,
 ): Promise<void> {
-  if (!required) return;
   if (!ctx.hasUI) throw new Error("This persistent mutation requires interactive confirmation");
   if (!(await ctx.ui.confirm("Confirm scheduler change", message))) {
     throw new Error("Scheduler change cancelled");
   }
 }
 
-function toScheduleInput(
-  schedule: {
-    kind: "once" | "interval" | "cron";
-    runAt?: string;
-    every?: string;
-    expression?: string;
-    timezone?: string;
-  },
-  scope: "session" | "durable",
-): ScheduleInput {
+function toScheduleInput(schedule: {
+  kind: "once" | "interval" | "cron";
+  runAt?: string;
+  every?: string;
+  expression?: string;
+  timezone?: string;
+}): ScheduleInput {
   if (schedule.kind === "once") {
     if (!schedule.runAt) throw new Error("once schedule requires runAt");
-    return { kind: "once", runAt: schedule.runAt, scope };
+    return { kind: "once", runAt: schedule.runAt };
   }
   if (schedule.kind === "interval") {
     if (!schedule.every) throw new Error("interval schedule requires every");
-    return { kind: "interval", every: schedule.every, scope };
+    return { kind: "interval", every: schedule.every };
   }
   if (!schedule.expression) throw new Error("cron schedule requires expression");
-  return {
-    kind: "cron",
-    expression: schedule.expression,
-    timezone: schedule.timezone,
-    scope,
-  };
+  return { kind: "cron", expression: schedule.expression, timezone: schedule.timezone };
 }
 
 function result(text: string, details: unknown = {}): {
@@ -134,10 +139,15 @@ function result(text: string, details: unknown = {}): {
 }
 
 function formatTask(task: ScheduleTask): string {
-  const schedule = task.schedule.kind === "interval"
-    ? `every ${task.schedule.everyMs}ms`
-    : task.schedule.kind === "cron"
-      ? `cron ${task.schedule.expression}`
-      : `once ${task.schedule.runAt}`;
-  return `${task.id} [${task.enabled ? "enabled" : "disabled"}] ${schedule} → ${task.nextRunAt ?? "never"}`;
+  return `${task.id} [${task.enabled ? "enabled" : "disabled"}] ${task.name ?? "-"} — ${formatSchedule(task)} — next ${task.nextRunAt ?? "never"}`;
+}
+
+function formatRun(run: RunRecord): string {
+  return `${run.runId} [${run.status}] ${run.trigger} — ${run.finishedAt ?? run.startedAt}`;
+}
+
+function formatSchedule(task: ScheduleTask): string {
+  if (task.schedule.kind === "interval") return `every ${task.schedule.everyMs}ms`;
+  if (task.schedule.kind === "cron") return `cron ${task.schedule.expression}`;
+  return `once ${task.schedule.runAt}`;
 }

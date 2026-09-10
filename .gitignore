@@ -1,5 +1,7 @@
 node_modules/
 .DS_Store
+dist/
+.pi/scheduler/
 .pi/scheduler.json
 .pi/scheduler.lock
 .pi/*.corrupt.*

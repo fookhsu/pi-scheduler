@@ -83,7 +83,7 @@ pi-scheduler run-due（执行面，单次幂等）
 {
   "runId": "run_...",
   "taskId": "task_...",
-  "trigger": "cron" | "manual",
+  "trigger": "scheduled" | "manual",
   "startedAt": "...",
   "finishedAt": "...",
   "status": "running" | "success" | "error" | "skipped" | "missed",

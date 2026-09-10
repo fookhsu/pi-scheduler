@@ -6,11 +6,12 @@ export type ScheduleDefinition =
   | { kind: "cron"; expression: string; timezone?: string };
 
 export type ScheduleInput =
-  | { kind: "once"; runAt: string; scope?: TaskScope }
-  | { kind: "interval"; every: string; scope?: TaskScope }
-  | { kind: "cron"; expression: string; timezone?: string; scope?: TaskScope };
+  | { kind: "once"; runAt: string }
+  | { kind: "interval"; every: string }
+  | { kind: "cron"; expression: string; timezone?: string };
 
-export type TaskScope = "session" | "durable";
+/** The Task Runner is invoked on a cron heartbeat, so sub-minute intervals are meaningless. */
+export const MIN_INTERVAL_MS = 60_000;
 
 const DURATION_UNITS: Record<string, number> = {
   ms: 1,
@@ -64,18 +65,29 @@ export function parseScheduleInput(input: ScheduleInput): ScheduleDefinition {
 
   if (input.kind === "interval") {
     const everyMs = parseDuration(input.every);
-    if (input.scope === "durable" && everyMs < 60_000) {
-      throw new Error("Durable intervals must be at least 1 minute");
-    }
-    if (input.scope === "session" && everyMs < 30_000) {
-      throw new Error("Session intervals must be at least 30 seconds");
-    }
+    if (everyMs < MIN_INTERVAL_MS) throw new Error("Intervals must be at least 1 minute");
     return { kind: "interval", everyMs };
   }
 
   const expression = normalizeCronExpression(input.expression);
   new Cron(expression, { timezone: input.timezone });
   return { kind: "cron", expression, timezone: input.timezone };
+}
+
+/** Validate and normalize a stored definition (the shape persisted in tasks.json). */
+export function normalizeScheduleDefinition(schedule: ScheduleDefinition): ScheduleDefinition {
+  if (schedule.kind === "once") {
+    const date = new Date(schedule.runAt);
+    if (Number.isNaN(date.getTime())) throw new Error(`Invalid runAt: ${schedule.runAt}`);
+    return { kind: "once", runAt: date.toISOString() };
+  }
+  if (schedule.kind === "interval") {
+    if (!(schedule.everyMs > 0)) throw new Error("Interval must be greater than zero");
+    return { kind: "interval", everyMs: schedule.everyMs };
+  }
+  const expression = normalizeCronExpression(schedule.expression);
+  new Cron(expression, { timezone: schedule.timezone });
+  return { kind: "cron", expression, timezone: schedule.timezone };
 }
 
 export function calculateNextRun(
@@ -95,9 +107,11 @@ export function calculateNextRun(
   return next ?? undefined;
 }
 
-export function isDue(task: { nextRunAt?: string; pending: boolean }, now: Date): boolean {
-  if (task.pending) return true;
+/** The planned time of a task has arrived at the moment the runner is invoked. */
+export function isDue(task: Pick<ScheduleTaskLike, "nextRunAt">, now: Date): boolean {
   if (!task.nextRunAt) return false;
   const nextRunAt = new Date(task.nextRunAt);
   return !Number.isNaN(nextRunAt.getTime()) && nextRunAt.getTime() <= now.getTime();
 }
+
+type ScheduleTaskLike = { nextRunAt?: string };

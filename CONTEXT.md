@@ -1,44 +1,48 @@
 # Pi Scheduler Context
 
-This project defines scheduled work for Pi sessions and keeps the language around planning, execution, and recovery explicit.
+This project executes scheduled prompt tasks for Pi. Triggering is owned by an external scheduler, so the language separates planned time from execution: the plugin decides which tasks are due and runs them, and never owns timing.
 
 ## Scheduling
 
 **Schedule Task**:
-A user-defined instruction intended to be performed at a specified time or recurring cadence.
-_Avoid_: Job, cron job, reminder (unless referring specifically to a task type).
+A stored prompt plus a time rule defining work to be performed at a planned time or cadence.
+_Avoid_: Job, cron job, reminder, durable task, session task.
 
-**Session Task**:
-A schedule task that belongs only to the currently running Pi session.
-_Avoid_: Temporary job.
-
-**Durable Task**:
-A schedule task that belongs to a project and remains available across Pi restarts.
-_Avoid_: Persistent job, global task.
-
-**Task Run**:
-One attempted execution of a schedule task.
-_Avoid_: Task, schedule.
-
-**Pending Task**:
-A due schedule task waiting for Pi to become available for execution.
-_Avoid_: Queued job (unless discussing the implementation queue).
+**Due Task**:
+A schedule task whose planned time has arrived at the moment the task runner is invoked.
+_Avoid_: Pending task, queued job.
 
 **Missed Task**:
-A schedule task whose planned time passed while Pi was not available to execute it.
+A due task whose grace window ended before any task run claimed it.
 _Avoid_: Expired task.
 
-**Scheduler**:
-The component that determines when schedule tasks are due.
-_Avoid_: Runner.
+**Trigger**:
+The cause of a task run: `scheduled` when the task's planned time arrived, `manual` when a user requested it directly.
+_Avoid_: Event, cause, cron.
+
+## Execution
 
 **Task Runner**:
-The component that starts a Task Session for a due task run.
-_Avoid_: Daemon, scheduler.
+The component that executes due schedule tasks, creating one task session per task run. It is invoked by an external scheduler and never schedules itself.
+_Avoid_: Scheduler, daemon, worker.
+
+**Task Run**:
+One execution attempt of a schedule task.
+_Avoid_: Task, job run, execution.
+
+**Run Claim**:
+The exclusive marker that one task run has been taken up by a task runner. A claim left behind by a crashed run is stale and may be reclaimed by a later invocation.
+_Avoid_: Lock, lease.
+
+**Run Lock**:
+The project-wide exclusive lock that allows at most one task runner to execute at a time.
+_Avoid_: Claim, mutex.
 
 **Task Session**:
-An isolated Pi session belonging to one Task Run and separate from the user's interactive Pi session.
+An isolated Pi session belonging to one task run and separate from the user's interactive session.
 _Avoid_: Background session, shared session.
+
+## Sessions
 
 **Pi Session**:
 A conversation and its recorded context owned by one Pi runtime.

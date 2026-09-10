@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   calculateNextRun,
+  isDue,
   parseDuration,
   parseScheduleInput,
 } from "../src/scheduling.ts";
@@ -13,9 +14,9 @@ test("parses compact durations", () => {
   assert.equal(parseDuration("1 day"), 86_400_000);
 });
 
-test("rejects invalid or sub-minute durable durations", () => {
+test("rejects invalid or sub-minute durations", () => {
   assert.throws(() => parseDuration("nope"), /duration/i);
-  assert.throws(() => parseScheduleInput({ kind: "interval", every: "30s", scope: "durable" }), /minute/i);
+  assert.throws(() => parseScheduleInput({ kind: "interval", every: "30s" }), /minute/i);
 });
 
 test("calculates once and interval schedules", () => {
@@ -28,10 +29,7 @@ test("calculates once and interval schedules", () => {
     "2026-09-01T11:00:00.000Z",
   );
   assert.equal(
-    calculateNextRun(
-      parseScheduleInput({ kind: "interval", every: "5m", scope: "session" }),
-      now,
-    )?.toISOString(),
+    calculateNextRun(parseScheduleInput({ kind: "interval", every: "5m" }), now)?.toISOString(),
     "2026-09-01T10:05:00.000Z",
   );
 });
@@ -40,9 +38,16 @@ test("calculates five-field cron schedules", () => {
   const now = new Date("2026-09-01T10:01:00.000Z");
   assert.equal(
     calculateNextRun(
-      parseScheduleInput({ kind: "cron", expression: "*/5 * * * *", scope: "durable" }),
+      parseScheduleInput({ kind: "cron", expression: "*/5 * * * *" }),
       now,
     )?.toISOString(),
     "2026-09-01T10:05:00.000Z",
   );
+});
+
+test("a task is due once its planned time has arrived", () => {
+  const now = new Date("2026-09-01T10:05:00.000Z");
+  assert.equal(isDue({ nextRunAt: "2026-09-01T10:05:00.000Z" }, now), true);
+  assert.equal(isDue({ nextRunAt: "2026-09-01T10:06:00.000Z" }, now), false);
+  assert.equal(isDue({}, now), false);
 });

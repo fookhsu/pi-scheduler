@@ -1,6 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { readFile, rename } from "node:fs/promises";
+import { writeJsonAtomic } from "./fs-utils.ts";
 import type { ScheduleDefinition } from "./scheduling.ts";
 import type { ScheduleTask } from "./types.ts";
 
@@ -48,21 +47,7 @@ export async function loadTasks(filePath: string): Promise<ScheduleTask[]> {
 }
 
 export async function saveTasks(filePath: string, tasks: ScheduleTask[]): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const temporaryPath = join(
-    dirname(filePath),
-    `.${basename(filePath)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
-  );
-  const payload = JSON.stringify({ version: STORAGE_VERSION, tasks }, null, 2) + "\n";
-
-  try {
-    await writeFile(temporaryPath, payload, { encoding: "utf8", mode: 0o600 });
-    await chmod(temporaryPath, 0o600);
-    await rename(temporaryPath, filePath);
-    await chmod(filePath, 0o600);
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
-  }
+  await writeJsonAtomic(filePath, { version: STORAGE_VERSION, tasks });
 }
 
 function isScheduleTask(value: unknown): value is ScheduleTask {
@@ -70,16 +55,19 @@ function isScheduleTask(value: unknown): value is ScheduleTask {
   const task = value as Partial<ScheduleTask>;
   return (
     typeof task.id === "string" &&
+    task.id.length > 0 &&
     typeof task.prompt === "string" &&
     task.prompt.length > 0 &&
-    (task.scope === "session" || task.scope === "durable") &&
     typeof task.enabled === "boolean" &&
-    typeof task.pending === "boolean" &&
     typeof task.createdAt === "string" &&
     typeof task.updatedAt === "string" &&
-    typeof task.runCount === "number" &&
-    Number.isInteger(task.runCount) &&
-    task.runCount >= 0 &&
+    (task.nextRunAt === undefined || typeof task.nextRunAt === "string") &&
+    (task.name === undefined || typeof task.name === "string") &&
+    (task.model === undefined || typeof task.model === "string") &&
+    (task.thinking === undefined || typeof task.thinking === "string") &&
+    (task.cwd === undefined || typeof task.cwd === "string") &&
+    (task.tools === undefined ||
+      (Array.isArray(task.tools) && task.tools.every((tool) => typeof tool === "string"))) &&
     isScheduleDefinition(task.schedule)
   );
 }
@@ -96,8 +84,7 @@ function isScheduleDefinition(value: unknown): value is ScheduleDefinition {
 }
 
 async function backupCorruptFile(filePath: string): Promise<void> {
-  const backupPath = `${filePath}.corrupt.${Date.now()}`;
-  await rename(filePath, backupPath).catch(() => undefined);
+  await rename(filePath, `${filePath}.corrupt.${Date.now()}`).catch(() => undefined);
 }
 
 export { STORAGE_VERSION };

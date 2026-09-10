@@ -1,7 +1,7 @@
-import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type SchedulerLock = {
+export type RunLock = {
   path: string;
   release(): Promise<void>;
 };
@@ -12,7 +12,11 @@ type LockRecord = {
   startedAt: string;
 };
 
-export async function acquireLock(path: string): Promise<SchedulerLock | undefined> {
+/**
+ * Acquire the project-wide run lock. Returns undefined when another live
+ * invocation owns it; a lock left by a dead process is reclaimed.
+ */
+export async function acquireLock(path: string): Promise<RunLock | undefined> {
   await mkdir(dirname(path), { recursive: true });
   const record: LockRecord = {
     pid: process.pid,

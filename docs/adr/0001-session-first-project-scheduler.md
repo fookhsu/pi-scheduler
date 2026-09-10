@@ -1,6 +1,6 @@
 # ADR 0001: Session-first project scheduler
 
-- Status: Accepted
+- Status: Superseded by ADR 0002
 - Date: 2026-09-01
 
 ## Context
