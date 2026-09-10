@@ -15,11 +15,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fookhsu/pi-extensions.git"
+    "url": "git+https://github.com/fookhsu/pi-scheduler.git"
   },
-  "homepage": "https://github.com/fookhsu/pi-extensions#readme",
+  "homepage": "https://github.com/fookhsu/pi-scheduler#readme",
   "bugs": {
-    "url": "https://github.com/fookhsu/pi-extensions/issues"
+    "url": "https://github.com/fookhsu/pi-scheduler/issues"
   },
   "type": "module",
   "bin": {

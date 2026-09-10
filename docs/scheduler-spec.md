@@ -1,6 +1,6 @@
 # pi-scheduler 后台任务 Runner 规格
 
-> 状态：已决策，待实现。决策依据见 [Wayfinder map #1](https://github.com/fookhsu/pi-extensions/issues/1) 及其子 tickets。
+> 状态：已决策，待实现。决策依据见 [Wayfinder map #1](https://github.com/fookhsu/pi-scheduler/issues/1) 及其子 tickets。
 
 ## 目标
 
