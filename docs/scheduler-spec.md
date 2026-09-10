@@ -36,7 +36,6 @@ pi-scheduler run-due（执行面，单次幂等）
 - `pi-scheduler run <taskId> [--project <path>]` — 立即执行单任务。
 - `pi-scheduler list [--project <path>] [--json]` — 列出任务与最近运行。
 - `pi-scheduler add|enable|disable|remove ...` — 可选 shell 管理。
-- `pi-scheduler migrate` — 从旧 `.pi/scheduler.json` 迁移。
 - `pi-scheduler prune --keep <n>` — 清理运行记录。
 
 退出码：`0` 成功（含无到期任务、锁被其他存活实例持有而跳过）；`1` 至少一个任务失败；`2` 配置/存储错误。
@@ -125,13 +124,6 @@ pi-scheduler run-due（执行面，单次幂等）
 
 - 默认不向当前 Pi session 注入任何运行结果；可选在 footer 显示「上次运行状态」。
 - 每任务默认保留最近 20 个 run；`prune --keep <n>` 清理。
-
-## 迁移（从旧 in-process MVP）
-
-- 废弃旧 `src/scheduler.ts` 进程内调度、旧 `scheduler.json`/`scheduler.lock`。
-- `pi-scheduler migrate`：旧 durable 任务 → `tasks.json`（丢弃 runCount/lastStatus 等运行态）；旧 session 任务不迁移。
-- `/loop` 语义 breaking：由进程内 session 任务改为 durable 周期任务。
-- 旧 [ADR 0001](adr/0001-session-first-project-scheduler.md) 被 [ADR 0002](adr/0002-background-runner-task-sessions.md) 取代。
 
 ## Out of scope
 

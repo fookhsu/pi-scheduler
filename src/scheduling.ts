@@ -74,22 +74,6 @@ export function parseScheduleInput(input: ScheduleInput): ScheduleDefinition {
   return { kind: "cron", expression, timezone: input.timezone };
 }
 
-/** Validate and normalize a stored definition (the shape persisted in tasks.json). */
-export function normalizeScheduleDefinition(schedule: ScheduleDefinition): ScheduleDefinition {
-  if (schedule.kind === "once") {
-    const date = new Date(schedule.runAt);
-    if (Number.isNaN(date.getTime())) throw new Error(`Invalid runAt: ${schedule.runAt}`);
-    return { kind: "once", runAt: date.toISOString() };
-  }
-  if (schedule.kind === "interval") {
-    if (!(schedule.everyMs > 0)) throw new Error("Interval must be greater than zero");
-    return { kind: "interval", everyMs: schedule.everyMs };
-  }
-  const expression = normalizeCronExpression(schedule.expression);
-  new Cron(expression, { timezone: schedule.timezone });
-  return { kind: "cron", expression, timezone: schedule.timezone };
-}
-
 export function calculateNextRun(
   schedule: ScheduleDefinition,
   from: Date,

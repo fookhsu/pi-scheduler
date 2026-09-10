@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import { migrateLegacyTasks } from "./migrate.ts";
 import { schedulerPaths } from "./paths.ts";
 import { listRuns, pruneRuns } from "./runs.ts";
 import { runDue, runTask, TaskNotFoundError, type TaskExecutor } from "./runner.ts";
@@ -16,7 +15,6 @@ const USAGE = [
   "  add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [options]",
   "  enable <taskId> | disable <taskId> | remove <taskId>",
   "  prune --keep <n> [--project <path>]     Keep the newest n runs per task",
-  "  migrate [--force] [--project <path>]    Move legacy .pi/scheduler.json durable tasks",
 ].join("\n");
 
 export type CliDeps = {
@@ -76,11 +74,6 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<number> 
       }
       case "prune":
         return await commandPrune(project, flags, out);
-      case "migrate": {
-        const result = await migrateLegacyTasks(project, { force: flags.has("force") });
-        out(`Migrated ${result.migrated} task(s); skipped ${result.skippedSessionTasks} session task(s)`);
-        return 0;
-      }
       default:
         err(`Unknown command: ${command}`);
         err(USAGE);
@@ -194,7 +187,7 @@ type ParsedArgs = {
   flags: Map<string, string | boolean>;
 };
 
-const BOOLEAN_FLAGS = new Set(["json", "force"]);
+const BOOLEAN_FLAGS = new Set(["json"]);
 
 function parseArgs(argv: string[], cwd: string): ParsedArgs {
   const positional: string[] = [];

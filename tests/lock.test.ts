@@ -7,7 +7,7 @@ import { acquireLock } from "../src/lock.ts";
 
 test("allows one owner and releases its lock", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-scheduler-"));
-  const path = join(dir, "scheduler.lock");
+  const path = join(dir, "run.lock");
   const first = await acquireLock(path);
   assert.ok(first);
   assert.equal(await acquireLock(path), undefined);

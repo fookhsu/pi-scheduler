@@ -45,7 +45,6 @@ pi-scheduler list [--project <path>] [--json]
 pi-scheduler add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [--name n]
 pi-scheduler enable <taskId> | disable <taskId> | remove <taskId>
 pi-scheduler prune --keep <n>
-pi-scheduler migrate [--force]
 ```
 
 Exit codes: `0` success (including "no due tasks" and "another instance holds
@@ -111,13 +110,6 @@ JSONL files, is written with `0600` permissions.
   minutes) is recorded as `missed` and needs `run <id>`.
 - A run still marked `running` after the timeout (default 30 minutes) is
   reclaimed as `error` on the next invocation.
-
-## Migration from the in-process MVP
-
-`pi-scheduler migrate` reads the legacy `.pi/scheduler.json` and writes
-`.pi/scheduler/tasks.json`, keeping only durable tasks and discarding run state.
-Session tasks are not migrated. The old in-process scheduler, `/loop` session
-semantics, and daemon-free-in-session execution are gone.
 
 ## Development
 
