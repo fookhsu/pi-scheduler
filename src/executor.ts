@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   createAgentSession,
@@ -78,8 +79,10 @@ async function executeInTaskSession(
 
     try {
       await session.prompt(formatPrompt(task, run));
+      const file = session.sessionFile ?? sessionFile;
+      await chmod(file, 0o600).catch(() => undefined);
       return {
-        sessionFile: session.sessionFile ?? sessionFile,
+        sessionFile: file,
         summary: lastAssistantText(session.messages),
       };
     } finally {
