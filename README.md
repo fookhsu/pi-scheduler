@@ -90,12 +90,15 @@ Creating, deleting, and clearing tasks requires interactive confirmation.
 ## Storage and recovery
 
 ```text
-<project>/.pi/scheduler/              # gitignored, files are 0600
-├── tasks.json                        # versioned task definitions
-├── run.lock                          # project-wide run lock
-├── runs/<runId>.json                 # one record per run
-└── sessions/<taskId>/<runId>.jsonl   # the Task Session
+<project>/.pi/scheduler/
+├── tasks.json                        # versioned task definitions, 0600
+├── run.lock                          # project-wide run lock, 0600
+├── runs/<runId>.json                 # one record per run, 0600
+└── sessions/<taskId>/<runId>.jsonl   # the Task Session, forced to 0600
 ```
+
+The whole directory is gitignored. Every scheduler file, including Task Session
+JSONL files, is written with `0600` permissions.
 
 - A task stores a prompt and a time rule, never a shell command.
 - Task definitions and run records are separate; run state is never inlined into

@@ -46,12 +46,14 @@ pi-scheduler run-due（执行面，单次幂等）
 ## 存储布局
 
 ```
-<project>/.pi/scheduler/              # .gitignore，文件权限 0600
-├── tasks.json                        # 版本化 durable 任务定义
-├── run.lock                          # 项目级运行锁
-├── runs/<runId>.json                 # 每次运行的元数据
-└── sessions/<taskId>/<runId>.jsonl   # 独立 Task Session
+<project>/.pi/scheduler/              # .gitignore
+├── tasks.json                        # 版本化 durable 任务定义（0600）
+├── run.lock                          # 项目级运行锁（0600）
+├── runs/<runId>.json                 # 每次运行的元数据（0600）
+└── sessions/<taskId>/<runId>.jsonl   # 独立 Task Session（0600，SDK 生成后强制 chmod）
 ```
+
+所有调度文件（tasks.json、run.lock、runs/*.json、sessions/**/*.jsonl）均为 0600；Task Session 文件由 SDK 写入后由 Runner 强制 chmod 0600。
 
 - Task（定义）与 Run（执行记录）分离；运行状态不内联进 `tasks.json`。
 - ID：`task_<8hex>`；`run_<YYYYMMDDHHmmss>_<8hex>`。
