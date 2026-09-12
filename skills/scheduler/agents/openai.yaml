@@ -1,0 +1,3 @@
+interface:
+  display_name: "Scheduler"
+  short_description: "Create and inspect scheduled prompt tasks"
