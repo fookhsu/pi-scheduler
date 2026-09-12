@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
+import "./agents/builtin.ts";
+import type { AgentRegistry } from "./agents/registry.ts";
 import { schedulerPaths } from "./paths.ts";
 import { listRuns, pruneRuns } from "./runs.ts";
-import { runDue, runTask, TaskNotFoundError, type TaskExecutor } from "./runner.ts";
+import { runDue, runTask, TaskNotFoundError } from "./runner.ts";
 import type { ScheduleInput } from "./scheduling.ts";
 import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "./task-service.ts";
 import type { RunRecord, ScheduleTask } from "./types.ts";
@@ -9,16 +11,18 @@ import type { RunRecord, ScheduleTask } from "./types.ts";
 const USAGE = [
   "pi-scheduler <command> [options]",
   "",
-  "  run-due [--project <path>]              Execute every due task (cron entry point)",
-  "  run <taskId> [--project <path>]         Execute one task now",
+  "  run-due [--project <path>] [--agent <id>]   Execute every due task (cron entry point)",
+  "  run <taskId> [--project <path>] [--agent <id>]   Execute one task now",
   "  list [--project <path>] [--json]        List tasks and their latest run",
   "  add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [options]",
   "  enable <taskId> | disable <taskId> | remove <taskId>",
   "  prune --keep <n> [--project <path>]     Keep the newest n runs per task",
+  "",
+  "Agents: --agent <id> selects the agent adapter (default: the built-in agent).",
 ].join("\n");
 
 export type CliDeps = {
-  executor?: TaskExecutor;
+  agents?: AgentRegistry;
   cwd?: string;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
@@ -43,11 +47,13 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<number> 
         out(USAGE);
         return 0;
       case "run-due":
-        return await commandRunDue(project, deps, out);
+        return await commandRunDue(project, flags, deps, out);
       case "run": {
         const id = requireArgument(positional[0], "run requires a task id");
-        const executor = await resolveExecutor(deps);
-        const outcome = await runTask(project, id, { executor });
+        const outcome = await runTask(project, id, {
+          agents: deps.agents,
+          agent: stringFlag(flags, "agent"),
+        });
         out(`${outcome.status}: ${outcome.taskId} (${outcome.runId || "not started"})`);
         return outcome.status === "error" ? 1 : 0;
       }
@@ -85,9 +91,17 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<number> 
   }
 }
 
-async function commandRunDue(project: string, deps: CliDeps, out: (line: string) => void): Promise<number> {
-  const executor = await resolveExecutor(deps);
-  const result = await runDue({ projectDir: project, executor });
+async function commandRunDue(
+  project: string,
+  flags: Map<string, string | boolean>,
+  deps: CliDeps,
+  out: (line: string) => void,
+): Promise<number> {
+  const result = await runDue({
+    projectDir: project,
+    agents: deps.agents,
+    agent: stringFlag(flags, "agent"),
+  });
   if (result.skipped) {
     out("Another pi-scheduler instance owns the run lock; skipped.");
     return 0;
@@ -129,6 +143,7 @@ async function commandAdd(
     prompt,
     schedule: scheduleFromFlags(flags),
     name: stringFlag(flags, "name"),
+    agent: stringFlag(flags, "agent"),
     model: stringFlag(flags, "model"),
     thinking: stringFlag(flags, "thinking"),
     cwd: stringFlag(flags, "cwd"),
@@ -150,12 +165,6 @@ async function commandPrune(
   if (!Number.isInteger(keep) || keep < 0) throw new Error("--keep must be a non-negative integer");
   out(`Pruned ${await pruneRuns(schedulerPaths(project).runsDir, keep)} run(s)`);
   return 0;
-}
-
-async function resolveExecutor(deps: CliDeps): Promise<TaskExecutor> {
-  if (deps.executor) return deps.executor;
-  const { createSdkExecutor } = await import("./executor.ts");
-  return createSdkExecutor();
 }
 
 function scheduleFromFlags(flags: Map<string, string | boolean>): ScheduleInput {

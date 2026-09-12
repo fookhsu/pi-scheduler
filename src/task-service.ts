@@ -9,6 +9,7 @@ export type NewTaskInput = {
   prompt: string;
   schedule: ScheduleInput;
   name?: string;
+  agent?: string;
   model?: string;
   thinking?: string;
   cwd?: string;
@@ -37,6 +38,7 @@ export async function addTask(
     schedule,
     enabled: true,
     nextRunAt: initialNextRun(schedule, now),
+    ...(input.agent ? { agent: input.agent } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.thinking ? { thinking: input.thinking } : {}),
     ...(input.cwd ? { cwd: input.cwd } : {}),

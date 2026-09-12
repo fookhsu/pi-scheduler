@@ -1,16 +1,19 @@
 # pi-scheduler
 
-Cron-driven scheduled prompt tasks for [Pi](https://pi.dev).
+Cron-driven scheduled prompt tasks for coding agents, with [Pi](https://pi.dev)
+as the built-in agent.
 
 Pi is the management surface; the `pi-scheduler` CLI is the execution surface. A
-cron entry invokes `pi-scheduler run-due`, which creates a fully isolated **Task
-Session** through the Pi SDK for each due task. The plugin never schedules
-itself and never injects task output into your interactive Pi session.
+cron entry invokes `pi-scheduler run-due`, which drives each due task through an
+**Agent Adapter** — the Pi adapter creates a fully isolated **Task Session** per
+run. The plugin never schedules itself and never injects task output into your
+interactive Pi session.
 
 ## Features
 
 - One-time, interval, and cron schedules
 - One isolated Task Session per run, stored as its own session file
+- Agent adapter layer: Pi built in, new agents added without touching the core
 - Project-local task and run storage under `.pi/scheduler/`
 - Idempotent `run-due` with a project run lock and per-run records
 - Crash recovery: stale runs are reclaimed on the next invocation
@@ -25,8 +28,10 @@ pi install npm:@fookhsu/pi-scheduler
 
 # Or from a checkout
 pi install .
-npm run build     # produce the pi-scheduler CLI in dist/
 ```
+
+Requires Node `>=22.19.0`: the package ships TypeScript, and the CLI runs it
+through Node's built-in type stripping, so there is no build step.
 
 Restart Pi or run `/reload` after installing. Installed with `pi install -l`,
 the package is recorded in the project's `.pi/settings.json` instead of your
@@ -47,13 +52,16 @@ instead. If you linked it onto your `PATH`, plain `pi-scheduler` works.
 ## CLI
 
 ```text
-pi-scheduler run-due [--project <path>]     # cron entry point
-pi-scheduler run <taskId> [--project <path>]
+pi-scheduler run-due [--project <path>] [--agent <id>]     # cron entry point
+pi-scheduler run <taskId> [--project <path>] [--agent <id>]
 pi-scheduler list [--project <path>] [--json]
-pi-scheduler add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [options]
+pi-scheduler add --prompt <text> (--at <iso>|--every <duration>|--cron <expr>) [--agent <id>] [options]
 pi-scheduler enable <taskId> | disable <taskId> | remove <taskId>
 pi-scheduler prune --keep <n>
 ```
+
+`--agent` selects the agent adapter (see [Agents](#agents)); it sets the task's
+agent on `add` and the fallback agent on `run-due` and `run`.
 
 Exit codes: `0` success (including "no due tasks" and "another instance holds
 the lock"), `1` at least one task failed, `2` configuration or storage error.
@@ -102,7 +110,7 @@ and extensions. You can override what it uses at two levels.
 
 Resolution order, highest priority first:
 
-1. Per-task fields (`model`, `thinking`, `cwd`, `tools`).
+1. Per-task fields (`agent`, `model`, `thinking`, `cwd`, `tools`).
 2. Project settings in `<project>/.pi/settings.json`.
 3. User settings in `~/.pi/agent/settings.json`.
 
@@ -140,8 +148,8 @@ file in an editor with inherited global resources dimmed.
 
 ### Override one task
 
-Any task can override the model, thinking level, working directory, and tool
-allowlist. In `.pi/scheduler/tasks.json`:
+Any task can override the agent, model, thinking level, working directory, and
+tool allowlist. In `.pi/scheduler/tasks.json`:
 
 ```json
 {
@@ -149,6 +157,7 @@ allowlist. In `.pi/scheduler/tasks.json`:
   "name": "daily-audit",
   "prompt": "检查 CI 并分析失败原因",
   "schedule": { "kind": "cron", "expression": "0 9 * * *" },
+  "agent": "pi",
   "model": "anthropic/claude-opus-4-5",
   "thinking": "high",
   "cwd": "packages/api",
@@ -161,7 +170,9 @@ allowlist. In `.pi/scheduler/tasks.json`:
 ```
 
 `cwd` is resolved relative to the project root. Omitting a field falls back to
-the project and user settings; omitting `tools` keeps Pi's default tool set.
+the project and user settings; omitting `tools` keeps the agent's default tool
+set. Omitting `agent` uses the adapter that `run-due` selected (the built-in Pi
+adapter by default).
 
 The same overrides are available on the CLI and the Agent tool:
 
@@ -169,6 +180,7 @@ The same overrides are available on the CLI and the Agent tool:
 pi-scheduler add \
   --prompt "检查 CI 并分析失败原因" \
   --cron "0 9 * * *" \
+  --agent pi \
   --model anthropic/claude-opus-4-5 \
   --thinking high \
   --cwd packages/api \
@@ -180,12 +192,37 @@ pi-scheduler add \
   "action": "add",
   "prompt": "检查 CI 并分析失败原因",
   "schedule": { "kind": "cron", "expression": "0 9 * * *" },
+  "agent": "pi",
   "model": "anthropic/claude-opus-4-5",
   "thinking": "high",
   "cwd": "packages/api",
   "tools": ["read", "bash", "grep"]
 }
 ```
+
+## Agents
+
+The scheduler core — scheduling, storage, locking, run records — never imports
+an agent SDK. Running a task goes through an **Agent Adapter**: a small object
+that knows how to drive one Task Run in a concrete runtime.
+
+```ts
+export interface AgentAdapter {
+  readonly id: string;          // e.g. "pi"
+  readonly displayName: string;
+  run(request: AgentRunRequest): Promise<AgentRunResult>;
+}
+```
+
+Adapters register lazily, so an unused agent SDK is never imported. Adding an
+agent means adding `src/agents/<id>/adapter.ts` and one `registerAgent` line in
+`src/agents/builtin.ts`; the runner, CLI, storage, and Pi surface stay
+untouched. The Pi adapter lives in `src/agents/pi/` together with the Pi
+extension, tools, and slash commands.
+
+Pi remains the management surface: `/schedule`, `/loop`, and `/remind` still
+manage the same store, and `schedule_task` gains an `agent` field to pin a task
+to a specific adapter.
 
 ## Storage and recovery
 
@@ -216,11 +253,14 @@ JSONL files, is written with `0600` permissions.
 
 ```bash
 npm install
-npm run check    # typecheck + tests + build
+npm run check    # typecheck + tests
 ```
 
-`extensions/scheduler.ts` is the management surface; the Task Runner, stores,
-locking, CLI, and Pi SDK executor live under `src/`.
+`src/agents/` is the agent adapter layer: `types.ts` is the adapter contract,
+`registry.ts` resolves adapters, `builtin.ts` wires the built-ins, and
+`pi/` holds everything Pi-specific (SDK adapter, extension, tools, commands).
+Everything else in `src/` is agent-agnostic: the Task Runner, stores, locking,
+and CLI.
 
 ## Releasing
 
@@ -228,10 +268,11 @@ The package follows the [Pi package](https://pi.dev/docs/latest/packages)
 conventions: the `pi-package` keyword and a `pi` manifest in `package.json`.
 
 ```bash
-npm run check        # typecheck + tests + build
+npm run check        # typecheck + tests
 npm pack --dry-run   # inspect the published file list
-npm publish          # prepare builds dist/, prepublishOnly re-runs check
+npm publish          # prepublishOnly re-runs check
 ```
 
-`files` ships `bin/`, `dist/`, `extensions/`, `skills/`, and `src/` — the
-extension imports `src/*.ts` at runtime, so `src/` must stay in the tarball.
+`files` ships `bin/`, `skills/`, and `src/`. There is no `dist/`: the extension
+and the CLI both run the TypeScript in `src/` directly, so the tarball has one
+source of truth.

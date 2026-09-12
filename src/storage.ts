@@ -11,14 +11,18 @@ type StorageFile = {
 };
 
 export class FileTaskStore {
-  constructor(private readonly filePath: string) {}
+  readonly #filePath: string;
+
+  constructor(filePath: string) {
+    this.#filePath = filePath;
+  }
 
   load(): Promise<ScheduleTask[]> {
-    return loadTasks(this.filePath);
+    return loadTasks(this.#filePath);
   }
 
   save(tasks: ScheduleTask[]): Promise<void> {
-    return saveTasks(this.filePath, tasks);
+    return saveTasks(this.#filePath, tasks);
   }
 }
 
@@ -63,6 +67,7 @@ function isScheduleTask(value: unknown): value is ScheduleTask {
     typeof task.updatedAt === "string" &&
     (task.nextRunAt === undefined || typeof task.nextRunAt === "string") &&
     (task.name === undefined || typeof task.name === "string") &&
+    (task.agent === undefined || typeof task.agent === "string") &&
     (task.model === undefined || typeof task.model === "string") &&
     (task.thinking === undefined || typeof task.thinking === "string") &&
     (task.cwd === undefined || typeof task.cwd === "string") &&

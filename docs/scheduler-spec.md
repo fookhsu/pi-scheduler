@@ -4,14 +4,16 @@
 
 ## 目标
 
-在 Pi 中创建和管理定时任务；Pi 退出后，由统一 Task Runner 通过 Pi SDK 为每次 Task Run 创建独立 Task Session；系统 Cron 触发 Runner；执行记录不进入用户当前 Pi session。以 KISS 为硬约束：Pi Agent 只作为 SDK 调用，不复制一套 Agent runtime。
+在 Pi 中创建和管理定时任务；Pi 退出后，由统一 Task Runner 经 Agent 适配层为每次 Task Run 创建独立 Task Session；系统 Cron 触发 Runner；执行记录不进入用户当前 Pi session。以 KISS 为硬约束：Agent 只作为 SDK 或 CLI 调用，不复制一套 Agent runtime。
 
 ## 领域模型
 
-- **Schedule Task**：定时任务定义（时间规则 + prompt）。
+- **Schedule Task**：定时任务定义（时间规则 + prompt + 可选 agent）。
 - **Task Run**：任务的一次执行。
-- **Task Session**：某次 Task Run 独立创建的 Pi session。
-- **Task Runner**：发现到期任务并启动 Task Session 的进程。
+- **Task Session**：某次 Task Run 独立创建的 Agent session。
+- **Agent Adapter**：把一次 Task Run 驱动到某个具体 Agent runtime 的适配器（Pi、Codex 等）；Agent 专属逻辑只存在于适配器内。
+- **Agent Registry**：按 id 解析适配器的注册表；适配器惰性加载，未使用的 Agent SDK 不会被 import。
+- **Task Runner**：发现到期任务并交给适配器启动 Task Session 的进程；不感知任何 Agent SDK。
 - **User Pi Session**：用户当前交互式 Pi 会话（仅用于管理任务）。
 
 ## 架构
@@ -25,17 +27,20 @@
     │  系统 Cron
     ▼
 pi-scheduler run-due（执行面，单次幂等）
-    └── 对每个到期任务：Pi SDK 创建全新 Task Session
+    └── Task Runner（Agent 无关）
+            └── Agent Registry 按 task.agent 解析
+                    └── Agent Adapter（内置 Pi；可扩展）
+                            └── 对每个到期任务：创建全新 Task Session
 ```
 
 ## CLI 契约
 
 单一二进制 `pi-scheduler`（`package.json.bin`）：
 
-- `pi-scheduler run-due [--project <path>]` — Cron 唯一入口，执行到期任务。
-- `pi-scheduler run <taskId> [--project <path>]` — 立即执行单任务。
+- `pi-scheduler run-due [--project <path>] [--agent <id>]` — Cron 唯一入口，执行到期任务。
+- `pi-scheduler run <taskId> [--project <path>] [--agent <id>]` — 立即执行单任务。
 - `pi-scheduler list [--project <path>] [--json]` — 列出任务与最近运行。
-- `pi-scheduler add|enable|disable|remove ...` — 可选 shell 管理。
+- `pi-scheduler add|enable|disable|remove ...` — 可选 shell 管理；`add --agent <id>` 指定适配器。
 - `pi-scheduler prune --keep <n>` — 清理运行记录。
 
 退出码：`0` 成功（含无到期任务、锁被其他存活实例持有而跳过）；`1` 至少一个任务失败；`2` 配置/存储错误。

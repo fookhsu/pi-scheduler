@@ -8,10 +8,10 @@ import {
   resolveCliModel,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { schedulerPaths, sessionFileFor } from "./paths.ts";
+import { sessionFileFor, schedulerPaths } from "../../paths.ts";
+import type { RunRecord, ScheduleTask } from "../../types.ts";
+import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../types.ts";
 import { TASK_SESSION_ENV } from "./env.ts";
-import type { TaskExecutor } from "./runner.ts";
-import type { RunRecord, ScheduleTask } from "./types.ts";
 
 const THINKING_LEVELS = [
   "off",
@@ -25,21 +25,20 @@ const THINKING_LEVELS = [
 
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-/**
- * The only place that turns a Task Run into a real Pi Task Session. One fresh,
- * isolated session per run; nothing is shared with the user's Pi session.
- */
-export function createSdkExecutor(): TaskExecutor {
+/** Agent adapter for Pi: one fresh, isolated Pi session per Task Run. */
+export function createPiAdapter(): AgentAdapter {
   return {
-    execute: executeInTaskSession,
+    id: "pi",
+    displayName: "Pi",
+    run: runInTaskSession,
   };
 }
 
-async function executeInTaskSession(
-  task: ScheduleTask,
-  run: RunRecord,
-  projectDir: string,
-): Promise<{ sessionFile?: string; summary?: string }> {
+async function runInTaskSession({
+  task,
+  run,
+  projectDir,
+}: AgentRunRequest): Promise<AgentRunResult> {
   const cwd = task.cwd ? resolve(projectDir, task.cwd) : projectDir;
   const sessionFile = sessionFileFor(schedulerPaths(projectDir), task.id, run.runId);
   const sessionManager = SessionManager.open(sessionFile, dirname(sessionFile), cwd);

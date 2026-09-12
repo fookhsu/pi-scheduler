@@ -39,8 +39,18 @@ The project-wide exclusive lock that allows at most one task runner to execute a
 _Avoid_: Claim, mutex.
 
 **Task Session**:
-An isolated Pi session belonging to one task run and separate from the user's interactive session.
+An isolated agent session belonging to one task run and separate from the user's interactive session.
 _Avoid_: Background session, shared session.
+
+## Agents
+
+**Agent Adapter**:
+The component that drives one task run in a concrete agent runtime, owning everything runtime-specific: session creation, model resolution, credentials.
+_Avoid_: Provider, backend, driver, integration.
+
+**Agent Registry**:
+The lookup from an agent id to its adapter. Adapters load lazily, so an unused agent runtime is never imported.
+_Avoid_: Plugin manager, factory.
 
 ## Sessions
 

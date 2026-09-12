@@ -1,0 +1,49 @@
+import type { AgentAdapter } from "./types.ts";
+
+export type AgentInfo = { id: string; displayName: string };
+
+/** Loads an adapter on first use, so unused agent SDKs never get imported. */
+export type AgentLoader = () => AgentAdapter | Promise<AgentAdapter>;
+
+const loaders = new Map<string, AgentLoader>();
+const displayNames = new Map<string, string>();
+
+/**
+ * The registry an adapter plugs into. Registration order decides the default
+ * agent: the first one registered serves tasks that name no agent.
+ */
+export function registerAgent(id: string, displayName: string, load: AgentLoader): void {
+  if (!loaders.has(id)) displayNames.set(id, displayName);
+  loaders.set(id, load);
+}
+
+export function listAgents(): AgentInfo[] {
+  return [...loaders].map(([id]) => ({ id, displayName: displayNames.get(id) ?? id }));
+}
+
+export function defaultAgentId(): string | undefined {
+  return loaders.keys().next().value;
+}
+
+export class UnknownAgentError extends Error {
+  constructor(id: string) {
+    const known = listAgents().map((agent) => agent.id);
+    super(`Unknown agent "${id}". Registered agents: ${known.length ? known.join(", ") : "(none)"}`);
+  }
+}
+
+export async function resolveAgent(id?: string): Promise<AgentAdapter> {
+  const wanted = id ?? defaultAgentId();
+  if (wanted === undefined) throw new UnknownAgentError(id ?? "default");
+  const load = loaders.get(wanted);
+  if (!load) throw new UnknownAgentError(wanted);
+  return await load();
+}
+
+/** The seam the Task Runner depends on; tests substitute a fake registry. */
+export interface AgentRegistry {
+  resolve(id?: string): Promise<AgentAdapter>;
+  list(): AgentInfo[];
+}
+
+export const agents: AgentRegistry = { resolve: resolveAgent, list: listAgents };

@@ -1,10 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readRun, listRunsForTask } from "./runs.ts";
-import { runTask } from "./runner.ts";
-import { schedulerPaths } from "./paths.ts";
-import { parseDuration } from "./scheduling.ts";
-import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "./task-service.ts";
-import type { RunRecord, ScheduleTask } from "./types.ts";
+import { readRun, listRunsForTask } from "../../runs.ts";
+import { runTask } from "../../runner.ts";
+import { schedulerPaths } from "../../paths.ts";
+import { parseDuration } from "../../scheduling.ts";
+import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "../../task-service.ts";
+import type { RunRecord, ScheduleTask } from "../../types.ts";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("loop", {
@@ -120,8 +120,7 @@ async function guard(ctx: CommandContext, run: () => Promise<void>): Promise<voi
 }
 
 async function executeNow(ctx: CommandContext, id: string): Promise<void> {
-  const { createSdkExecutor } = await import("./executor.ts");
-  const outcome = await runTask(ctx.cwd, id, { executor: createSdkExecutor() });
+  const outcome = await runTask(ctx.cwd, id, {});
   if (outcome.status === "skipped") {
     ctx.ui.notify("Another pi-scheduler invocation is running; try again shortly.", "warning");
     return;

@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerCommands } from "../src/commands.ts";
-import { registerTools } from "../src/tools.ts";
-import { TASK_SESSION_ENV } from "../src/env.ts";
+import "../builtin.ts";
+import { registerCommands } from "./commands.ts";
+import { registerTools } from "./tools.ts";
+import { TASK_SESSION_ENV } from "./env.ts";
 
 /**
  * Management surface only. The extension never schedules, locks, polls, or

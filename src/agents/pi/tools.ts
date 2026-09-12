@@ -1,12 +1,12 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { schedulerPaths } from "./paths.ts";
-import { listRunsForTask } from "./runs.ts";
-import { runTask } from "./runner.ts";
-import type { ScheduleInput } from "./scheduling.ts";
-import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "./task-service.ts";
-import type { RunRecord, ScheduleTask } from "./types.ts";
+import { schedulerPaths } from "../../paths.ts";
+import { listRunsForTask } from "../../runs.ts";
+import { runTask } from "../../runner.ts";
+import type { ScheduleInput } from "../../scheduling.ts";
+import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "../../task-service.ts";
+import type { RunRecord, ScheduleTask } from "../../types.ts";
 
 const actionSchema = StringEnum([
   "add",
@@ -43,6 +43,7 @@ export function registerTools(pi: ExtensionAPI): void {
       id: Type.Optional(Type.String()),
       name: Type.Optional(Type.String()),
       prompt: Type.Optional(Type.String()),
+      agent: Type.Optional(Type.String()),
       model: Type.Optional(Type.String()),
       thinking: Type.Optional(Type.String()),
       cwd: Type.Optional(Type.String()),
@@ -57,6 +58,7 @@ export function registerTools(pi: ExtensionAPI): void {
           name: params.name,
           prompt: params.prompt,
           schedule: toScheduleInput(params.schedule),
+          agent: params.agent,
           model: params.model,
           thinking: params.thinking,
           cwd: params.cwd,
@@ -83,8 +85,7 @@ export function registerTools(pi: ExtensionAPI): void {
         return result(`Disabled ${params.id}`, await setTaskEnabled(ctx.cwd, params.id!, false));
       }
       if (params.action === "run") {
-        const { createSdkExecutor } = await import("./executor.ts");
-        const outcome = await runTask(ctx.cwd, params.id!, { executor: createSdkExecutor() });
+        const outcome = await runTask(ctx.cwd, params.id!, {});
         return result(`${outcome.status}: ${outcome.taskId} (${outcome.runId || "not started"})`);
       }
       if (params.action === "delete") {

@@ -1,4 +1,5 @@
 import { acquireLock } from "./lock.ts";
+import { agents as builtInAgents, type AgentRegistry } from "./agents/registry.ts";
 import { schedulerPaths, type SchedulerPaths } from "./paths.ts";
 import { createRunId, pruneRuns, reclaimStaleRuns, writeRun } from "./runs.ts";
 import { calculateNextRun, isDue } from "./scheduling.ts";
@@ -9,19 +10,12 @@ const DEFAULT_RUN_TIMEOUT_MINUTES = 30;
 const DEFAULT_MISSED_GRACE_MINUTES = 5;
 const DEFAULT_KEEP_RUNS = 20;
 
-export type TaskSessionResult = {
-  sessionFile?: string;
-  summary?: string;
-};
-
-/** Adapter seam: how a Task Run becomes an isolated Pi Task Session. */
-export interface TaskExecutor {
-  execute(task: ScheduleTask, run: RunRecord, projectDir: string): Promise<TaskSessionResult>;
-}
-
 export type RunnerOptions = {
   projectDir: string;
-  executor: TaskExecutor;
+  /** Agent adapter registry; defaults to the built-in agents. */
+  agents?: AgentRegistry;
+  /** Agent for tasks that name none; defaults to the registry's default. */
+  agent?: string;
   now?: Date;
   runTimeoutMinutes?: number;
   missedGraceMinutes?: number;
@@ -97,7 +91,14 @@ export async function runTask(
 
   try {
     await reclaimStaleRuns(paths.runsDir, now, options.runTimeoutMinutes ?? DEFAULT_RUN_TIMEOUT_MINUTES);
-    return await executeTask(task, paths, { executor: options.executor, projectDir }, "manual", now, false);
+    return await executeTask(
+      task,
+      paths,
+      { agents: options.agents, agent: options.agent, projectDir },
+      "manual",
+      now,
+      false,
+    );
   } finally {
     await lock.release();
   }
@@ -115,7 +116,7 @@ export function findTask(tasks: ScheduleTask[], id: string): ScheduleTask | unde
 async function executeTask(
   task: ScheduleTask,
   paths: SchedulerPaths,
-  options: Pick<RunnerOptions, "executor" | "projectDir">,
+  options: Pick<RunnerOptions, "agents" | "agent" | "projectDir">,
   trigger: Trigger,
   now: Date,
   advanceSchedule = true,
@@ -130,10 +131,14 @@ async function executeTask(
   };
   await writeRun(paths.runsDir, run);
 
+  let agentId: string | undefined;
   try {
-    const result = await options.executor.execute(task, run, options.projectDir);
+    const adapter = await (options.agents ?? builtInAgents).resolve(task.agent ?? options.agent);
+    agentId = adapter.id;
+    const result = await adapter.run({ task, run, projectDir: options.projectDir });
     await writeRun(paths.runsDir, {
       ...run,
+      agent: agentId,
       status: "success",
       finishedAt: new Date().toISOString(),
       exitCode: 0,
@@ -145,6 +150,7 @@ async function executeTask(
   } catch (error) {
     await writeRun(paths.runsDir, {
       ...run,
+      ...(agentId ? { agent: agentId } : {}),
       status: "error",
       finishedAt: new Date().toISOString(),
       exitCode: 1,

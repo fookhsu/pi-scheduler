@@ -12,6 +12,8 @@ export type ScheduleTask = {
   schedule: ScheduleDefinition;
   enabled: boolean;
   nextRunAt?: string;
+  /** Agent adapter id; tasks without one run on the default agent. */
+  agent?: string;
   model?: string;
   thinking?: string;
   cwd?: string;
@@ -28,6 +30,8 @@ export type RunRecord = {
   finishedAt?: string;
   status: RunStatus;
   exitCode?: number;
+  /** Agent adapter that drove this run, when one was resolved. */
+  agent?: string;
   sessionFile?: string;
   summary?: string;
   error?: string;
