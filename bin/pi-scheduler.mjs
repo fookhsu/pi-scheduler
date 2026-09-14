@@ -1,4 +1,4 @@
 #!/usr/bin/env node
-import { main } from "../src/cli.ts";
+import { main } from "../dist/cli.js";
 
 process.exitCode = await main(process.argv.slice(2));

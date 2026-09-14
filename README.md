@@ -272,8 +272,13 @@ JSONL files, is written with `0600` permissions.
 
 ```bash
 npm install
-npm run check    # typecheck + tests
+npm run check    # typecheck + build + tests
 ```
+
+`npm run build` compiles `src/` to `dist/` with `tsc -p tsconfig.build.json`.
+`bin/pi-scheduler.mjs` and the `pi` manifest both point at `dist/`, because Node
+refuses to strip types for files under `node_modules` — a published package
+cannot run its own `.ts` sources.
 
 `src/agents/` is the agent adapter layer: `types.ts` is the adapter contract,
 `registry.ts` resolves adapters, `builtin.ts` wires the built-ins, and
@@ -287,11 +292,13 @@ The package follows the [Pi package](https://pi.dev/docs/latest/packages)
 conventions: the `pi-package` keyword and a `pi` manifest in `package.json`.
 
 ```bash
-npm run check        # typecheck + tests
+npm run check        # typecheck + build + tests
 npm pack --dry-run   # inspect the published file list
 npm publish          # prepublishOnly re-runs check
 ```
 
-`files` ships `bin/`, `skills/`, and `src/`. There is no `dist/`: the extension
-and the CLI both run the TypeScript in `src/` directly, so the tarball has one
-source of truth.
+`files` ships `bin/`, `dist/`, `skills/`, and `src/`. The `dist/` build is what
+makes a published install runnable, and `src/` ships alongside it so the source
+maps resolve. `@earendil-works/pi-coding-agent` is a required peer: the CLI
+imports it to run a task and nothing else on the machine provides it, so npm
+must install it.

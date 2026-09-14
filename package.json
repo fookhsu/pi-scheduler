@@ -27,6 +27,7 @@
   },
   "files": [
     "bin",
+    "dist",
     "skills",
     "src"
   ],
@@ -37,10 +38,11 @@
     "access": "public"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run check",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
     "croner": "^9.0.0"
@@ -62,16 +64,13 @@
     "@earendil-works/pi-ai": {
       "optional": true
     },
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
     "typebox": {
       "optional": true
     }
   },
   "pi": {
     "extensions": [
-      "./src/agents/pi/extension.ts"
+      "./dist/agents/pi/extension.js"
     ],
     "skills": [
       "./skills"
