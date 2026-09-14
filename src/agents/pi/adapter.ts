@@ -1,34 +1,26 @@
-import { chmod } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  getAgentDir,
-  ModelRuntime,
-  ProjectTrustStore,
-  resolveCliModel,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { spawn } from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import { chmod, mkdir } from "node:fs/promises";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { sessionFileFor, schedulerPaths } from "../../paths.ts";
 import type { RunRecord, ScheduleTask } from "../../types.ts";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../types.ts";
 import { TASK_SESSION_ENV } from "./env.ts";
-import { resolveTaskSessionTrust } from "./trust.ts";
 
-const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
+/** Names the `pi` executable the adapter spawns, for cron's minimal PATH. */
+export const PI_BIN_ENV = "PI_SCHEDULER_PI_BIN";
 
-type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-
-/** Agent adapter for Pi: one fresh, isolated Pi session per Task Run. */
+/**
+ * Agent adapter for Pi: one fresh, isolated Pi session per Task Run, driven by
+ * spawning `pi --print`.
+ *
+ * The adapter deliberately does not import the Pi SDK. A Task Run has to work
+ * from a bare `node` process under cron, where that SDK is not resolvable: it is
+ * a peer that Pi provides to its own extension loader, not to standalone CLIs.
+ * Spawning `pi` also means a Task Session runs on the user's own Pi — same
+ * model, credentials, and project-trust rules — instead of a second copy of the
+ * SDK that can drift from it.
+ */
 export function createPiAdapter(): AgentAdapter {
   return {
     id: "pi",
@@ -44,68 +36,85 @@ async function runInTaskSession({
 }: AgentRunRequest): Promise<AgentRunResult> {
   const cwd = task.cwd ? resolve(projectDir, task.cwd) : projectDir;
   const sessionFile = sessionFileFor(schedulerPaths(projectDir), task.id, run.runId);
-  const sessionManager = SessionManager.open(sessionFile, dirname(sessionFile), cwd);
+  await mkdir(dirname(sessionFile), { recursive: true });
 
-  const modelRuntime = task.model ? await ModelRuntime.create() : undefined;
-  let model;
-  let thinkingLevel = task.thinking as ThinkingLevel | undefined;
-  if (task.model && modelRuntime) {
-    const resolved = resolveCliModel({ cliModel: task.model, modelRuntime });
-    if (resolved.error || !resolved.model) {
-      throw new Error(resolved.error ?? `Could not resolve model: ${task.model}`);
+  const bin = resolvePiBinary();
+  const { code, stdout, stderr } = await spawnPi(bin, piArgs(task, run, sessionFile), cwd);
+  if (code !== 0) {
+    throw new Error(`pi exited with ${code}${stderr.trim() ? `: ${lastLines(stderr)}` : ""}`);
+  }
+
+  await chmod(sessionFile, 0o600).catch(() => undefined);
+  return { sessionFile, summary: summarize(stdout) };
+}
+
+/**
+ * The argv for one Task Run. `--print` keeps the run non-interactive, which is
+ * also what makes the spawned Pi resolve project trust headlessly instead of
+ * prompting — the same rule any other non-interactive Pi mode follows.
+ */
+export function piArgs(task: ScheduleTask, run: RunRecord, sessionFile: string): string[] {
+  return [
+    "--print",
+    "--session",
+    sessionFile,
+    ...(task.model ? ["--model", task.model] : []),
+    ...(task.thinking ? ["--thinking", task.thinking] : []),
+    ...(task.tools?.length ? ["--tools", task.tools.join(",")] : []),
+    formatPrompt(task, run),
+  ];
+}
+
+/** Finds the `pi` executable: an explicit override first, then $PATH. */
+export function resolvePiBinary(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env[PI_BIN_ENV]?.trim();
+  if (override) return override;
+
+  const windows = process.platform === "win32";
+  const names = windows ? ["pi.cmd", "pi.exe", "pi"] : ["pi"];
+  const mode = windows ? constants.F_OK : constants.X_OK;
+
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = join(dir, name);
+      try {
+        accessSync(candidate, mode);
+        return candidate;
+      } catch {
+        // Not in this directory; keep looking.
+      }
     }
-    model = resolved.model;
-    thinkingLevel = thinkingLevel ?? resolved.thinkingLevel;
-  }
-  if (thinkingLevel && !THINKING_LEVELS.includes(thinkingLevel)) {
-    throw new Error(`Unknown thinking level: ${thinkingLevel}`);
   }
 
-  const agentDir = getAgentDir();
-  const resourceLoader = new DefaultResourceLoader({ cwd, agentDir });
+  throw new Error(
+    `Could not find "pi" on PATH, which is expected under cron. Set ${PI_BIN_ENV} to the full path of the pi executable.`,
+  );
+}
 
-  // The Task Runner is invoked by cron, so this session is always headless.
-  // Resolve project trust explicitly: the loader would otherwise default to
-  // trusting every project and load its settings, skills, and extensions.
-  const trustStore = new ProjectTrustStore(agentDir);
-  const defaultProjectTrust = SettingsManager.create(cwd, agentDir, {
-    projectTrusted: false,
-  }).getDefaultProjectTrust();
+type PiProcessResult = { code: number | null; stdout: string; stderr: string };
 
-  // Set before reload(): extension factories run while resources load, and the
-  // scheduler extension must stay inert inside its own Task Session.
-  const previous = process.env[TASK_SESSION_ENV];
-  process.env[TASK_SESSION_ENV] = "1";
-  try {
-    await resourceLoader.reload({
-      resolveProjectTrust: async () =>
-        resolveTaskSessionTrust({ cwd, trustStore, defaultProjectTrust }),
-    });
-    const { session } = await createAgentSession({
+function spawnPi(bin: string, args: string[], cwd: string): Promise<PiProcessResult> {
+  return new Promise((settle, fail) => {
+    const child = spawn(bin, args, {
       cwd,
-      sessionManager,
-      resourceLoader,
-      ...(modelRuntime ? { modelRuntime } : {}),
-      ...(model ? { model } : {}),
-      ...(thinkingLevel ? { thinkingLevel } : {}),
-      ...(task.tools?.length ? { tools: task.tools } : {}),
+      env: { ...process.env, [TASK_SESSION_ENV]: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
-    try {
-      await session.prompt(formatPrompt(task, run));
-      const file = session.sessionFile ?? sessionFile;
-      await chmod(file, 0o600).catch(() => undefined);
-      return {
-        sessionFile: file,
-        summary: lastAssistantText(session.messages),
-      };
-    } finally {
-      session.dispose();
-    }
-  } finally {
-    if (previous === undefined) delete process.env[TASK_SESSION_ENV];
-    else process.env[TASK_SESSION_ENV] = previous;
-  }
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => fail(new Error(`Could not run ${bin}: ${error.message}`)));
+    child.on("close", (code) => settle({ code, stdout, stderr }));
+  });
 }
 
 function formatPrompt(task: ScheduleTask, run: RunRecord): string {
@@ -119,28 +128,13 @@ function formatPrompt(task: ScheduleTask, run: RunRecord): string {
   ].join("\n");
 }
 
-function lastAssistantText(messages: readonly unknown[]): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index] as { role?: string; content?: unknown };
-    if (message.role !== "assistant") continue;
-    const text = contentToText(message.content);
-    if (text) return text.length > 1_000 ? `${text.slice(0, 1_000)}…` : text;
-  }
-  return undefined;
+/** `pi --print` writes the assistant's last message to stdout. */
+function summarize(stdout: string): string | undefined {
+  const text = stdout.trim();
+  if (!text) return undefined;
+  return text.length > 1_000 ? `${text.slice(0, 1_000)}…` : text;
 }
 
-function contentToText(content: unknown): string | undefined {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return undefined;
-  const parts = content
-    .filter((part): part is { type: "text"; text: string } => {
-      return (
-        Boolean(part) &&
-        typeof part === "object" &&
-        (part as { type?: unknown }).type === "text" &&
-        typeof (part as { text?: unknown }).text === "string"
-      );
-    })
-    .map((part) => part.text);
-  return parts.length ? parts.join("\n") : undefined;
+function lastLines(text: string, count = 3): string {
+  return text.trim().split("\n").filter(Boolean).slice(-count).join(" / ");
 }

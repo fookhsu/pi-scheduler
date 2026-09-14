@@ -43,11 +43,16 @@ user settings.
 crontab. Add one line per project (or point `--project` at each project):
 
 ```cron
-*/5 * * * * cd /path/to/project && "$HOME/.pi/agent/npm/node_modules/.bin/pi-scheduler" run-due >> .pi/scheduler/cron.log 2>&1
+*/5 * * * * cd /path/to/project && PI_SCHEDULER_PI_BIN=/absolute/path/to/pi "$HOME/.pi/agent/npm/node_modules/.bin/pi-scheduler" run-due >> .pi/scheduler/cron.log 2>&1
 ```
 
 Project installs put the binary at `.pi/npm/node_modules/.bin/pi-scheduler`
 instead. If you linked it onto your `PATH`, plain `pi-scheduler` works.
+
+Running a task spawns the `pi` executable, and cron starts jobs with a minimal
+`PATH` that usually does not include it. Either set `PATH=` at the top of the
+crontab, or point `PI_SCHEDULER_PI_BIN` at `pi` — the command above does the
+latter. A missing `pi` is reported on the run record, not silently skipped.
 
 ## CLI
 
@@ -118,14 +123,14 @@ A Task Session is an ordinary Pi session: it runs in the task's `cwd` (the
 project root by default) and loads that project's settings, `AGENTS.md`, skills,
 and extensions. You can override what it uses at two levels.
 
-Because the Task Runner is invoked by cron, a Task Session is always headless
-and nobody can answer Pi's project trust prompt. It therefore applies the saved
-decision in `~/.pi/agent/trust.json` and otherwise treats a project with
-project-local resources as untrusted — the same outcome as Pi's non-interactive
-modes. An untrusted project contributes no `.pi/settings.json`, skills,
-prompts, or extensions to its Task Sessions; run `/trust` in that project once
-(or set `defaultProjectTrust` to `"always"`) to change that. `AGENTS.md` is not
-gated by project trust and loads either way.
+Because the Task Runner is invoked by cron, a Task Session is always headless:
+it is a `pi --print` process, so it resolves project trust exactly like any
+other non-interactive Pi run — the saved decision in `~/.pi/agent/trust.json`,
+otherwise `defaultProjectTrust`, which leaves a project with project-local
+resources untrusted. An untrusted project contributes no `.pi/settings.json`,
+skills, prompts, or extensions to its Task Sessions; run `/trust` in that
+project once (or set `defaultProjectTrust` to `"always"`) to change that.
+`AGENTS.md` is not gated by project trust and loads either way.
 
 Resolution order, highest priority first:
 
@@ -233,11 +238,20 @@ export interface AgentAdapter {
 }
 ```
 
-Adapters register lazily, so an unused agent SDK is never imported. Adding an
+Adapters register lazily, so an unused agent runtime is never loaded. Adding an
 agent means adding `src/agents/<id>/adapter.ts` and one `registerAgent` line in
 `src/agents/builtin.ts`; the runner, CLI, storage, and Pi surface stay
 untouched. The Pi adapter lives in `src/agents/pi/` together with the Pi
 extension, tools, and slash commands.
+
+The Pi adapter drives a Task Run by spawning `pi --print --session <file>` in the
+task's `cwd`, and reports the printed answer as the run summary. It imports no
+Pi SDK, so a Task Run works from a bare `node` process — which is what cron is.
+The spawned `pi` is also the runtime that owns the model, credentials, and
+project-trust rules, so a scheduled run behaves like any other non-interactive
+Pi run. The only requirement is that `pi` be reachable: see
+[Configuration and overrides](#configuration-and-overrides) and
+`PI_SCHEDULER_PI_BIN`.
 
 Pi remains the management surface: `/schedule`, `/loop`, and `/remind` still
 manage the same store, and `schedule_task` gains an `agent` field to pin a task
@@ -282,7 +296,9 @@ cannot run its own `.ts` sources.
 
 `src/agents/` is the agent adapter layer: `types.ts` is the adapter contract,
 `registry.ts` resolves adapters, `builtin.ts` wires the built-ins, and
-`pi/` holds everything Pi-specific (SDK adapter, extension, tools, commands).
+`pi/` holds everything Pi-specific (adapter, extension, tools, commands), and
+nothing under `pi/` is imported by the CLI path except the adapter, which spawns
+`pi --print` rather than linking the SDK.
 Everything else in `src/` is agent-agnostic: the Task Runner, stores, locking,
 and CLI.
 
@@ -299,6 +315,6 @@ npm publish          # prepublishOnly re-runs check
 
 `files` ships `bin/`, `dist/`, `skills/`, and `src/`. The `dist/` build is what
 makes a published install runnable, and `src/` ships alongside it so the source
-maps resolve. `@earendil-works/pi-coding-agent` is a required peer: the CLI
-imports it to run a task and nothing else on the machine provides it, so npm
-must install it.
+maps resolve. `@earendil-works/pi-coding-agent` stays an optional peer: only the
+extension imports it, and Pi hands its own copy to extensions, so an install of
+the scheduler never needs a second SDK.
