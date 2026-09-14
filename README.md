@@ -70,8 +70,12 @@ the lock"), `1` at least one task failed, `2` configuration or storage error.
 
 ```text
 /loop 30m check CI status
+/loop "*/5 * * * *" check CI status
+/loop @daily check CI status
 /remind in 45m review the release
 /remind at 15:30 check production
+/schedule add 30m check CI status
+/schedule add "0 9 * * 1-5" check CI status
 /schedule list
 /schedule enable <id>
 /schedule disable <id>
@@ -82,6 +86,12 @@ the lock"), `1` at least one task failed, `2` configuration or storage error.
 /schedule clear
 /unschedule <id>
 ```
+
+`/loop` and `/schedule add` take a schedule first: a duration (`30m`), a cron
+nickname (`@daily`), or a cron expression in quotes. Quote an expression
+whenever it contains spaces, otherwise its first field is read as the start of
+the prompt. Nicknames are `@yearly`, `@annually`, `@monthly`, `@weekly`,
+`@daily`, and `@hourly`.
 
 `/schedule open <runId>` prints the Task Session file path and suggests
 `pi --session <path>`. Task Sessions are never merged into the current session.
@@ -100,13 +110,22 @@ The `schedule_task` tool supports `add`, `list`, `enable`, `disable`, `delete`,
 }
 ```
 
-Creating, deleting, and clearing tasks requires interactive confirmation.
+Deleting and clearing tasks requires interactive confirmation; creating a task does not. The `/schedule remove`, `/schedule clear`, and `/unschedule` commands ask for the same confirmation.
 
 ## Configuration and overrides
 
 A Task Session is an ordinary Pi session: it runs in the task's `cwd` (the
 project root by default) and loads that project's settings, `AGENTS.md`, skills,
 and extensions. You can override what it uses at two levels.
+
+Because the Task Runner is invoked by cron, a Task Session is always headless
+and nobody can answer Pi's project trust prompt. It therefore applies the saved
+decision in `~/.pi/agent/trust.json` and otherwise treats a project with
+project-local resources as untrusted — the same outcome as Pi's non-interactive
+modes. An untrusted project contributes no `.pi/settings.json`, skills,
+prompts, or extensions to its Task Sessions; run `/trust` in that project once
+(or set `defaultProjectTrust` to `"always"`) to change that. `AGENTS.md` is not
+gated by project trust and loads either way.
 
 Resolution order, highest priority first:
 

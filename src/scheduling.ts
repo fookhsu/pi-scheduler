@@ -49,11 +49,37 @@ export function parseDuration(value: string): number {
   return duration;
 }
 
+/** croner's nicknames, already expanded to the five-field forms they stand for. */
+const CRON_NICKNAMES: Record<string, string> = {
+  "@yearly": "0 0 1 1 *",
+  "@annually": "0 0 1 1 *",
+  "@monthly": "0 0 1 * *",
+  "@weekly": "0 0 * * 0",
+  "@daily": "0 0 * * *",
+  "@hourly": "0 * * * *",
+};
+
+/**
+ * Canonicalise a cron expression to the six-field form the store keeps: a
+ * five-field expression gains an explicit zero second, and a nickname is
+ * expanded. croner accepts nicknames directly, but expanding here means a
+ * stored task stays readable without knowing croner's table.
+ */
 export function normalizeCronExpression(expression: string): string {
-  const fields = expression.trim().split(/\s+/);
+  const trimmed = expression.trim().replace(/\s+/g, " ");
+
+  const nickname = CRON_NICKNAMES[trimmed.toLowerCase()];
+  if (nickname) return `0 ${nickname}`;
+  if (trimmed.startsWith("@")) {
+    throw new Error(
+      `Unknown cron nickname: ${trimmed}. Supported: ${Object.keys(CRON_NICKNAMES).join(", ")}`,
+    );
+  }
+
+  const fields = trimmed.split(" ");
   if (fields.length === 5) return `0 ${fields.join(" ")}`;
   if (fields.length === 6) return fields.join(" ");
-  throw new Error("Cron expression must have 5 or 6 fields");
+  throw new Error("Cron expression must be 5 or 6 fields, or a nickname such as @daily");
 }
 
 export function parseScheduleInput(input: ScheduleInput): ScheduleDefinition {
@@ -89,6 +115,29 @@ export function calculateNextRun(
 
   const next = new Cron(schedule.expression, { timezone: schedule.timezone }).nextRun(from);
   return next ?? undefined;
+}
+
+/**
+ * A recurring schedule as typed by a user: a duration (`30m`), a cron nickname
+ * (`@daily`), or a quoted cron expression (`"0 9 * * 1-5"`). An unquoted
+ * expression is rejected because its spaces cannot be told apart from the
+ * start of the prompt that follows it.
+ */
+export function parseScheduleSpec(spec: string): ScheduleInput {
+  const trimmed = spec.trim();
+  const quoted = /^"(.*)"$/s.exec(trimmed);
+  const value = (quoted ? quoted[1] : trimmed).trim();
+
+  if (quoted || value.startsWith("@")) return { kind: "cron", expression: value };
+
+  try {
+    parseDuration(value);
+  } catch {
+    throw new Error(
+      'Schedule must be a duration like 30m, or a quoted cron expression like "0 9 * * 1-5", or a nickname like @daily',
+    );
+  }
+  return { kind: "interval", every: value };
 }
 
 /** The planned time of a task has arrived at the moment the runner is invoked. */

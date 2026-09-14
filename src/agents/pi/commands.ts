@@ -2,20 +2,21 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readRun, listRunsForTask } from "../../runs.ts";
 import { runTask } from "../../runner.ts";
 import { schedulerPaths } from "../../paths.ts";
-import { parseDuration } from "../../scheduling.ts";
+import { parseDuration, parseScheduleSpec } from "../../scheduling.ts";
 import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "../../task-service.ts";
 import type { RunRecord, ScheduleTask } from "../../types.ts";
+import { confirmMutation } from "./confirm.ts";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("loop", {
-    description: "Create a recurring task: /loop 30m check CI",
+    description: 'Create a recurring task: /loop 30m check CI, or /loop "*/5 * * * *" check CI',
     handler: async (args, ctx) => {
       await guard(ctx, async () => {
-        const match = /^\s*(\S+)\s+([\s\S]+?)\s*$/.exec(args);
-        if (!match) throw new Error("Usage: /loop <duration> <prompt>");
+        const match = /^\s*("[^"]*"|\S+)\s+([\s\S]+?)\s*$/.exec(args);
+        if (!match) throw new Error("Usage: /loop <duration|cron> <prompt>");
         const task = await addTask(ctx.cwd, {
           prompt: match[2],
-          schedule: { kind: "interval", every: match[1] },
+          schedule: parseScheduleSpec(match[1]),
         });
         ctx.ui.notify(`Created ${task.id}; next run ${formatDate(task.nextRunAt)}`, "info");
       });
@@ -50,9 +51,9 @@ export function registerCommands(pi: ExtensionAPI): void {
           return;
         }
         if (action === "add") {
-          const match = /^\s*add\s+(\S+)\s+([\s\S]+?)\s*$/.exec(args);
-          if (!match) throw new Error("Usage: /schedule add <duration> <prompt>");
-          const task = await addTask(ctx.cwd, { prompt: match[2], schedule: { kind: "interval", every: match[1] } });
+          const match = /^\s*add\s+("[^"]*"|\S+)\s+([\s\S]+?)\s*$/.exec(args);
+          if (!match) throw new Error("Usage: /schedule add <duration|cron> <prompt>");
+          const task = await addTask(ctx.cwd, { prompt: match[2], schedule: parseScheduleSpec(match[1]) });
           ctx.ui.notify(`Created ${task.id}; next run ${formatDate(task.nextRunAt)}`, "info");
           return;
         }
@@ -72,6 +73,7 @@ export function registerCommands(pi: ExtensionAPI): void {
         }
 
         if (action === "clear") {
+          await confirmMutation(ctx, "Delete all scheduled tasks?");
           ctx.ui.notify(`Cleared ${await clearTasks(ctx.cwd)} task(s)`, "info");
           return;
         }
@@ -87,6 +89,7 @@ export function registerCommands(pi: ExtensionAPI): void {
           return;
         }
         if (action === "remove" || action === "delete") {
+          await confirmMutation(ctx, `Delete scheduled task ${id}?`);
           await removeTask(ctx.cwd, id);
           ctx.ui.notify(`Removed ${id}`, "info");
           return;
@@ -102,6 +105,7 @@ export function registerCommands(pi: ExtensionAPI): void {
       await guard(ctx, async () => {
         const id = args.trim();
         if (!id) throw new Error("Usage: /unschedule <id>");
+        await confirmMutation(ctx, `Delete scheduled task ${id}?`);
         await removeTask(ctx.cwd, id);
         ctx.ui.notify(`Removed ${id}`, "info");
       });

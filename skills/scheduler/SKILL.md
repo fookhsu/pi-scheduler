@@ -34,8 +34,12 @@ If `pi-scheduler` is not on `PATH`, call the installed binary directly:
 ## Rules
 
 - Use `once` with an ISO timestamp, `interval` with a duration of at least 1
-  minute such as `30m`, or `cron` with a 5- or 6-field expression.
-- Creating, deleting, and clearing tasks requires interactive confirmation in Pi.
+  minute such as `30m`, or `cron` with a 5- or 6-field expression or a nickname
+  (`@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`, `@annually`).
+- `/loop` and `/schedule add` accept a duration, a nickname, or a quoted cron
+  expression (quote it whenever it contains spaces).
+- Deleting and clearing tasks requires interactive confirmation in Pi; creating
+  a task does not.
 - Tasks contain prompts for Pi; they never contain arbitrary shell commands.
 - Do not create duplicate tasks when an existing task already represents the
   same request.

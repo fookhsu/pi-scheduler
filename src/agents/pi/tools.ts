@@ -7,6 +7,7 @@ import { runTask } from "../../runner.ts";
 import type { ScheduleInput } from "../../scheduling.ts";
 import { addTask, clearTasks, listTasks, removeTask, setTaskEnabled } from "../../task-service.ts";
 import type { RunRecord, ScheduleTask } from "../../types.ts";
+import { confirmMutation } from "./confirm.ts";
 
 const actionSchema = StringEnum([
   "add",
@@ -23,7 +24,12 @@ const scheduleSchema = Type.Object({
   kind: StringEnum(["once", "interval", "cron"] as const),
   runAt: Type.Optional(Type.String()),
   every: Type.Optional(Type.String()),
-  expression: Type.Optional(Type.String()),
+  expression: Type.Optional(
+    Type.String({
+      description:
+        "Cron expression: 5 or 6 fields, or a nickname such as @daily, @hourly, @weekly, @monthly, @yearly, @annually.",
+    }),
+  ),
   timezone: Type.Optional(Type.String()),
 });
 
@@ -53,7 +59,6 @@ export function registerTools(pi: ExtensionAPI): void {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (params.action === "add") {
         if (!params.prompt || !params.schedule) throw new Error("add requires prompt and schedule");
-        await confirmMutation(ctx, "Create scheduled task?");
         const task = await addTask(ctx.cwd, {
           name: params.name,
           prompt: params.prompt,
@@ -101,16 +106,6 @@ export function registerTools(pi: ExtensionAPI): void {
       throw new Error(`Unsupported action: ${params.action}`);
     },
   });
-}
-
-async function confirmMutation(
-  ctx: { hasUI: boolean; ui: { confirm(title: string, body: string): Promise<boolean> } },
-  message: string,
-): Promise<void> {
-  if (!ctx.hasUI) throw new Error("This persistent mutation requires interactive confirmation");
-  if (!(await ctx.ui.confirm("Confirm scheduler change", message))) {
-    throw new Error("Scheduler change cancelled");
-  }
 }
 
 function toScheduleInput(schedule: {

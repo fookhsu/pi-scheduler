@@ -5,13 +5,16 @@ import {
   DefaultResourceLoader,
   getAgentDir,
   ModelRuntime,
+  ProjectTrustStore,
   resolveCliModel,
   SessionManager,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { sessionFileFor, schedulerPaths } from "../../paths.ts";
 import type { RunRecord, ScheduleTask } from "../../types.ts";
 import type { AgentAdapter, AgentRunRequest, AgentRunResult } from "../types.ts";
 import { TASK_SESSION_ENV } from "./env.ts";
+import { resolveTaskSessionTrust } from "./trust.ts";
 
 const THINKING_LEVELS = [
   "off",
@@ -58,14 +61,26 @@ async function runInTaskSession({
     throw new Error(`Unknown thinking level: ${thinkingLevel}`);
   }
 
-  const resourceLoader = new DefaultResourceLoader({ cwd, agentDir: getAgentDir() });
+  const agentDir = getAgentDir();
+  const resourceLoader = new DefaultResourceLoader({ cwd, agentDir });
+
+  // The Task Runner is invoked by cron, so this session is always headless.
+  // Resolve project trust explicitly: the loader would otherwise default to
+  // trusting every project and load its settings, skills, and extensions.
+  const trustStore = new ProjectTrustStore(agentDir);
+  const defaultProjectTrust = SettingsManager.create(cwd, agentDir, {
+    projectTrusted: false,
+  }).getDefaultProjectTrust();
 
   // Set before reload(): extension factories run while resources load, and the
   // scheduler extension must stay inert inside its own Task Session.
   const previous = process.env[TASK_SESSION_ENV];
   process.env[TASK_SESSION_ENV] = "1";
   try {
-    await resourceLoader.reload();
+    await resourceLoader.reload({
+      resolveProjectTrust: async () =>
+        resolveTaskSessionTrust({ cwd, trustStore, defaultProjectTrust }),
+    });
     const { session } = await createAgentSession({
       cwd,
       sessionManager,
